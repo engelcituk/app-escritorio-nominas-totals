@@ -1,0 +1,7 @@
+node_modules/
+dist/
+release/
+coverage/
+benchmark-500k.txt
+*.log
+.env

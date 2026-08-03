@@ -1,0 +1,7 @@
+<script setup lang="ts">
+import { onMounted, ref } from 'vue'; import PageHeader from '../components/PageHeader.vue';
+const directory=ref(''); const token=ref(''); const saved=ref(false); onMounted(async()=>{directory.value=(await window.sefiplanApi.getSettings()).reports_directory??'';});
+async function choose(){const selected=await window.sefiplanApi.selectExportDirectory();if(selected){directory.value=selected.name;token.value=selected.token;saved.value=false;}}
+async function save(){if(!token.value)return;await window.sefiplanApi.updateSettings({reports_directory_token:token.value});saved.value=true;}
+</script>
+<template><PageHeader title="Configuración" description="Define preferencias locales de reportes y periodos." /><form class="settings-panel" @submit.prevent="save"><div><label class="form-label" for="reports-dir">Carpeta predeterminada de reportes</label><div class="input-group"><input id="reports-dir" :value="directory" class="form-control" type="text" readonly placeholder="Documentos\SEFIPLAN Nomina" /><button class="btn btn-outline-primary" type="button" @click="choose">Seleccionar</button></div><div class="form-text">La carpeta se selecciona mediante el diálogo seguro de Windows.</div></div><div class="d-flex align-items-center gap-3"><button class="btn btn-primary" type="submit" :disabled="!token">Guardar configuración</button><span v-if="saved" class="text-success"><i class="bi bi-check-circle" /> Configuración guardada</span></div></form></template>

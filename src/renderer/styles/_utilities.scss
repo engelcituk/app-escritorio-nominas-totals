@@ -1,0 +1,5 @@
+.skip-link { position: fixed; z-index: 9999; top: 0.5rem; left: 0.5rem; padding: 0.65rem 1rem; transform: translateY(-150%); background: #fff; color: #18212f; box-shadow: 0 2px 8px rgba(0,0,0,.2); }.skip-link:focus { transform: translateY(0); }
+.inline-loading { display: flex; align-items: center; gap: 0.65rem; padding: 1.25rem; color: #4b5565; }
+.status-badge { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.22rem 0.5rem; border: 1px solid currentColor; border-radius: 999px; font-size: 0.76rem; font-weight: 650; white-space: nowrap; }.status-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.status-success { color: #18794e; background: #edf8f2; }.status-danger { color: #b42318; background: #fff1f0; }.status-warning { color: #8a5a00; background: #fff7df; }.status-info { color: #176b87; background: #edf7fa; }.status-neutral { color: #596273; background: #f2f4f7; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; } }
