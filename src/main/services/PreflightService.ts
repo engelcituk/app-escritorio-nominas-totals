@@ -31,7 +31,6 @@ export async function inspectPayrollFile(filePath: string, selected: SelectedFil
       const amountCents = parseAmountToCents(mapped.amountRaw);
       if (amountCents === null) rowErrors.push('El importe no es válido.');
       if (!mapped.conceptCode) rowErrors.push('Falta el código de concepto.');
-      if (!mapped.accountCode) rowErrors.push('Falta la cuenta contable.');
       if (!mapped.movementType) rowErrors.push('Falta el tipo de movimiento.');
       preview.push({ lineNumber, ...mapped, amountCents, valid: rowErrors.length === 0, errors: rowErrors });
       if (preview.length >= sampleLimit) break;

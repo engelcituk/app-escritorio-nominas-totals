@@ -125,16 +125,20 @@ async function run(): Promise<void> {
         const exclusion = exclusionEngine.evaluate(record, payload.payrollType, payload.exclusions);
         let status: RecordStatus;
         let validationError: string | null = null;
-        if (amountCents === null || !record.conceptCode || !record.accountCode || !record.movementType) {
+        if (amountCents === null || !record.conceptCode || !record.movementType) {
           status = RecordStatus.INVALID;
           counters.invalid += 1;
           validationError = amountCents === null ? 'El importe no es válido.' : 'Falta un campo obligatorio.';
-        } else if (exclusion.excluded) {
-          status = RecordStatus.EXCLUDED;
-          counters.excluded += 1;
         } else if (!classification.matched) {
           status = RecordStatus.UNCLASSIFIED;
           counters.unclassified += 1;
+        } else if (!record.accountCode) {
+          status = RecordStatus.INVALID;
+          counters.invalid += 1;
+          validationError = 'Falta la cuenta contable en un movimiento clasificado como ISR.';
+        } else if (exclusion.excluded) {
+          status = RecordStatus.EXCLUDED;
+          counters.excluded += 1;
         } else {
           status = RecordStatus.VALID;
           counters.valid += 1;

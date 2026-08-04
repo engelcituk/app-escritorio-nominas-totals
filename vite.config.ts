@@ -6,6 +6,11 @@ export default defineConfig({
   plugins: [vue()],
   root: 'src/renderer',
   base: './',
+  server: {
+    host: 'localhost',
+    port: 5173,
+    strictPort: true,
+  },
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src/renderer', import.meta.url)),

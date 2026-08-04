@@ -1,21 +1,74 @@
 <script setup lang="ts">
+import { computed, ref } from 'vue';
 import type { PreviewRecord } from '@shared/types/payroll';
 import MoneyValue from './MoneyValue.vue';
 import StatusBadge from './StatusBadge.vue';
-defineProps<{ rows: PreviewRecord[] }>();
+
+const INITIAL_ROWS = 5;
+const props = defineProps<{ rows: PreviewRecord[] }>();
+const expanded = ref(false);
+const visibleRows = computed(() => expanded.value ? props.rows : props.rows.slice(0, INITIAL_ROWS));
+const hiddenCount = computed(() => Math.max(0, props.rows.length - INITIAL_ROWS));
 </script>
+
 <template>
-  <div class="table-responsive table-frame">
-    <table class="table table-hover align-middle mb-0">
-      <caption class="visually-hidden">Vista previa de líneas interpretadas</caption>
-      <thead><tr><th>Línea</th><th>Núm. empleado</th><th>Nombre</th><th>Mov.</th><th>Código</th><th>Concepto</th><th class="text-end">Importe</th><th>Cuenta</th><th>Control</th><th>Final</th><th>Validación</th></tr></thead>
-      <tbody><tr v-for="row in rows" :key="row.lineNumber">
-        <td>{{ row.lineNumber }}</td><td>{{ row.employeeNumber || '—' }}</td><td>{{ row.employeeName || '—' }}</td><td>{{ row.movementType || '—' }}</td>
-        <td>{{ row.conceptCode || '—' }}</td><td class="concept-cell">{{ row.conceptDescriptionOriginal || '—' }}</td>
-        <td class="text-end"><MoneyValue v-if="row.amountCents !== null" :cents="row.amountCents" /><span v-else>—</span></td>
-        <td>{{ row.accountCode || '—' }}</td><td>{{ row.controlCode || '—' }}</td><td>{{ row.finalIndicator || '—' }}</td>
-        <td><StatusBadge :status="row.valid ? 'VALID' : 'INVALID'" /><div v-if="row.errors.length" class="field-error">{{ row.errors.join(' ') }}</div></td>
-      </tr></tbody>
-    </table>
-  </div>
+  <section class="preview-list" aria-labelledby="preview-list-title">
+    <header class="preview-list__header">
+      <div>
+        <span class="eyebrow">Vista previa interpretada</span>
+        <h4 id="preview-list-title">{{ rows.length }} movimientos de muestra</h4>
+      </div>
+      <p>Revisa empleado, concepto e importe. Los datos contables permanecen disponibles en el detalle.</p>
+    </header>
+
+    <ol class="preview-list__items">
+      <li v-for="row in visibleRows" :key="row.lineNumber" class="preview-record" :class="{ 'is-invalid': !row.valid }">
+        <div class="preview-record__summary">
+          <div class="preview-record__line" :aria-label="`Línea ${row.lineNumber}`">
+            <span>Línea</span><strong>{{ row.lineNumber }}</strong>
+          </div>
+
+          <div class="preview-record__employee">
+            <span class="preview-record__label">Empleado {{ row.employeeNumber || 'sin número' }}</span>
+            <strong>{{ row.employeeName || 'Nombre no disponible' }}</strong>
+          </div>
+
+          <div class="preview-record__concept">
+            <span class="preview-record__label">Concepto {{ row.conceptCode || 'sin código' }}</span>
+            <strong>{{ row.conceptDescriptionOriginal || 'Descripción no disponible' }}</strong>
+            <small>Movimiento {{ row.movementType || 'no indicado' }}</small>
+          </div>
+
+          <div class="preview-record__amount">
+            <span class="preview-record__label">Importe</span>
+            <MoneyValue v-if="row.amountCents !== null" :cents="row.amountCents" />
+            <strong v-else>—</strong>
+          </div>
+
+          <StatusBadge :status="row.valid ? 'VALID' : 'INVALID'" />
+        </div>
+
+        <div v-if="row.errors.length" class="preview-record__errors" role="alert">
+          <i class="bi bi-exclamation-circle" aria-hidden="true" />
+          <span>{{ row.errors.join(' ') }}</span>
+        </div>
+
+        <details class="preview-record__details">
+          <summary>Ver datos contables</summary>
+          <dl>
+            <div><dt>Cuenta contable</dt><dd>{{ row.accountCode || 'No informada' }}</dd></div>
+            <div><dt>Control</dt><dd>{{ row.controlCode || 'No informado' }}</dd></div>
+            <div><dt>Indicador final</dt><dd>{{ row.finalIndicator || 'No informado' }}</dd></div>
+          </dl>
+        </details>
+      </li>
+    </ol>
+
+    <footer v-if="hiddenCount" class="preview-list__footer">
+      <button class="btn btn-outline-secondary btn-sm" type="button" :aria-expanded="expanded" @click="expanded = !expanded">
+        <i class="bi" :class="expanded ? 'bi-chevron-up' : 'bi-chevron-down'" aria-hidden="true" />
+        {{ expanded ? 'Mostrar solo los primeros 5' : `Mostrar ${hiddenCount} movimientos restantes` }}
+      </button>
+    </footer>
+  </section>
 </template>

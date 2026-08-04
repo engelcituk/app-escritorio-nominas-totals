@@ -11,7 +11,7 @@ export function createMainWindow(): BrowserWindow {
     backgroundColor: '#F5F6F8',
     title: 'SEFIPLAN Nómina',
     webPreferences: {
-      preload: join(import.meta.dirname, '../preload/preload.js'),
+      preload: join(import.meta.dirname, '../preload/preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,

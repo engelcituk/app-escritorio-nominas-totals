@@ -4,7 +4,7 @@ import { useRoute } from 'vue-router';
 import AppSidebar from './components/AppSidebar.vue';
 
 const route = useRoute();
-const collapsed = ref(false);
+const collapsed = ref(window.matchMedia('(max-width: 767px)').matches);
 const pageTitle = computed(() => String(route.meta.title ?? 'SEFIPLAN Nómina'));
 </script>
 
@@ -14,7 +14,7 @@ const pageTitle = computed(() => String(route.meta.title ?? 'SEFIPLAN Nómina'))
     <AppSidebar :collapsed="collapsed" @toggle="collapsed = !collapsed" />
     <div class="app-workspace">
       <header class="app-topbar">
-        <button class="btn btn-icon d-lg-none" type="button" aria-label="Mostrar navegación" @click="collapsed = !collapsed">
+        <button class="btn btn-icon d-lg-none" type="button" :aria-label="collapsed ? 'Mostrar navegación' : 'Ocultar navegación'" :aria-expanded="!collapsed" @click="collapsed = !collapsed">
           <i class="bi bi-list" aria-hidden="true" />
         </button>
         <div>

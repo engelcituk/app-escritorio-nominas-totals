@@ -1,7 +1,8 @@
 import type { SefiplanApi } from '@shared/types/api';
 
 export function installPreviewApi(): void {
-  if (window.sefiplanApi || !['localhost', '127.0.0.1'].includes(window.location.hostname)) return;
+  const isElectron = navigator.userAgent.includes('Electron');
+  if (window.sefiplanApi || isElectron || !['localhost', '127.0.0.1'].includes(window.location.hostname)) return;
   const api: SefiplanApi = {
     selectTxtFile: async () => null,
     inspectTxtFile: async () => { throw new Error('La inspección de archivos solo está disponible dentro de la aplicación de escritorio.'); },

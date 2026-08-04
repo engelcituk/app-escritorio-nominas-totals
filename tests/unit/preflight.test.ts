@@ -11,4 +11,10 @@ describe('preflight', () => {
   it('habilita una muestra uniforme válida', async () => { const result = await inspect('uniform-valid.txt'); expect(result.canProcess).toBe(true); expect(result.validPercentage).toBe(100); });
   it('bloquea importes inválidos', async () => { const result = await inspect('uniform-invalid-amount.txt'); expect(result.canProcess).toBe(false); expect(result.preview[0]?.errors).toContain('El importe no es válido.'); });
   it('bloquea columnas faltantes', async () => { const result = await inspect('uniform-missing-columns.txt'); expect(result.canProcess).toBe(false); });
+  it('acepta percepciones sin cuenta contable durante la revisión estructural', async () => {
+    const result = await inspect('uniform-perception-without-account.txt');
+    expect(result.canProcess).toBe(true);
+    expect(result.validPercentage).toBe(100);
+    expect(result.preview[0]?.accountCode).toBe('');
+  });
 });

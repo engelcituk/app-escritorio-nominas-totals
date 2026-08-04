@@ -32,7 +32,9 @@ try {
   });
   const db = new DatabaseService(databasePath);
   const batch = db.connection.prepare('SELECT * FROM payroll_batches WHERE id = ?').get(processed.batchId);
-  if (batch.valid_lines !== 2 || batch.total_amount_cents !== 204055) throw new Error(`Totales inesperados: ${JSON.stringify(batch)}`);
+  if (batch.valid_lines !== 2 || batch.unclassified_lines !== 1 || batch.invalid_lines !== 0 || batch.total_amount_cents !== 204055) {
+    throw new Error(`Totales inesperados: ${JSON.stringify(batch)}`);
+  }
   const reports = await new ExcelReportBuilder(db.connection, outputDirectory).build(processed.batchId);
   if (reports.exportedTotal !== batch.total_amount_cents) throw new Error('La suma exportada no concilia.');
   await stat(reports.detailPath);
