@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
+import { PAYROLL_FIELD_LABELS } from '@shared/payroll-layouts/payrollFieldLabels';
 import type { PreviewRecord } from '@shared/types/payroll';
 import MoneyValue from './MoneyValue.vue';
 import StatusBadge from './StatusBadge.vue';
@@ -56,9 +57,10 @@ const hiddenCount = computed(() => Math.max(0, props.rows.length - INITIAL_ROWS)
         <details class="preview-record__details">
           <summary>Ver datos contables</summary>
           <dl>
+            <div><dt>{{ PAYROLL_FIELD_LABELS.dependencyKey }}</dt><dd>{{ row.dependencyKey || 'No informada' }}</dd></div>
             <div><dt>Cuenta contable</dt><dd>{{ row.accountCode || 'No informada' }}</dd></div>
-            <div><dt>Control</dt><dd>{{ row.controlCode || 'No informado' }}</dd></div>
-            <div><dt>Indicador final</dt><dd>{{ row.finalIndicator || 'No informado' }}</dd></div>
+            <div><dt>{{ PAYROLL_FIELD_LABELS.fundingSource }}</dt><dd>{{ row.fundingSource || 'No informada' }}</dd></div>
+            <div><dt>{{ PAYROLL_FIELD_LABELS.paymentCenter }}</dt><dd>{{ row.paymentCenter || 'No informado' }}</dd></div>
           </dl>
         </details>
       </li>

@@ -27,7 +27,7 @@ export class ProcessingService {
     };
     const worker = new Worker(new URL('../workers/PayrollProcessingWorker.js', import.meta.url), { workerData });
     this.workers.set(processId, worker);
-    worker.on('message', (message: Record<string, unknown>) => void this.handleMessage(processId, paths.outputDirectory, message));
+    worker.on('message', (message: Record<string, unknown>) => void this.handleMessage(processId, paths, request, message));
     worker.on('error', (error) => this.sendFailure(processId, null, this.friendlyMessage(error.message)));
     worker.on('exit', () => this.workers.delete(processId));
     return processId;
@@ -44,7 +44,8 @@ export class ProcessingService {
     return this.workers.size > 0;
   }
 
-  private async handleMessage(processId: string, outputDirectory: string, message: Record<string, unknown>): Promise<void> {
+  private async handleMessage(processId: string, paths: ProcessPaths, request: ProcessPayrollRequest,
+    message: Record<string, unknown>): Promise<void> {
     if (message.type === 'progress') {
       this.getWindow()?.webContents.send('payroll:progress', message.progress as ProcessingProgress);
       return;
@@ -74,7 +75,8 @@ export class ProcessingService {
     try {
       const batch = dbService.connection.prepare('SELECT * FROM payroll_batches WHERE id = ?').get(batchId) as Record<string, number>;
       this.sendSyntheticProgress(processId, ProcessingStage.BUILDING_DETAIL_REPORT, batch);
-      const reports = await new ExcelReportBuilder(dbService.connection, outputDirectory).build(batchId);
+      const reports = await new ExcelReportBuilder(dbService.connection, paths.outputDirectory)
+        .build(batchId, paths.filePath, request.exclusions);
       this.sendSyntheticProgress(processId, ProcessingStage.BUILDING_TOTALS_REPORT, batch);
       const persistedTotal = Number(batch.total_amount_cents);
       const difference = persistedTotal - reports.exportedTotal;

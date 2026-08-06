@@ -52,7 +52,7 @@ export function registerIpcHandlers(windowProvider: () => BrowserWindow | null, 
     db.close();
     const outputDirectory = request.exportDirectoryToken
       ? resolveToken(directoryTokens, request.exportDirectoryToken, 'Selecciona nuevamente la carpeta de reportes.')
-      : (setting?.value ?? join(app.getPath('documents'), 'SEFIPLAN Nomina'));
+      : (setting?.value ?? join(app.getPath('documents'), 'SEFIPLAN_Nomina'));
     const strictRequest = {
       fileToken: request.fileToken,
       year: request.year,

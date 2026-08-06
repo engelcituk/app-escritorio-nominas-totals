@@ -3,6 +3,7 @@ import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { Worker } from 'node:worker_threads';
+import ExcelJS from 'exceljs';
 import { DatabaseService } from '../dist/main/database/DatabaseService.js';
 import { ExcelReportBuilder } from '../dist/main/services/ExcelReportBuilder.js';
 import { BackupService } from '../dist/main/services/BackupService.js';
@@ -31,14 +32,24 @@ try {
     worker.on('error', reject);
   });
   const db = new DatabaseService(databasePath);
+  const recordsTable = db.connection.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'payroll_records'`).get();
+  if (recordsTable) throw new Error('El esquema no debe contener payroll_records.');
   const batch = db.connection.prepare('SELECT * FROM payroll_batches WHERE id = ?').get(processed.batchId);
   if (batch.valid_lines !== 2 || batch.unclassified_lines !== 1 || batch.invalid_lines !== 0 || batch.total_amount_cents !== 204055) {
     throw new Error(`Totales inesperados: ${JSON.stringify(batch)}`);
   }
-  const reports = await new ExcelReportBuilder(db.connection, outputDirectory).build(processed.batchId);
+  const reports = await new ExcelReportBuilder(db.connection, outputDirectory).build(processed.batchId,
+    resolve('tests/fixtures/uniform-isr.txt'), { retained: true, cancelled: true, other: true, includeAudit: true });
   if (reports.exportedTotal !== batch.total_amount_cents) throw new Error('La suma exportada no concilia.');
   await stat(reports.detailPath);
   await stat(reports.totalsPath);
+  const detailWorkbook = new ExcelJS.Workbook();
+  await detailWorkbook.xlsx.readFile(reports.detailPath);
+  const detail = detailWorkbook.getWorksheet('Detalle');
+  if (detail?.getCell('E1').value !== 'Clave dependencia' || detail.getCell('E2').value !== '21111061-06'
+    || detail.getCell('N1').value !== 'Fuente de financiamiento' || detail.getCell('O1').value !== 'Centro de pago') {
+    throw new Error('El detalle no contiene la Clave dependencia ni las etiquetas contables esperadas.');
+  }
   const snapshot = join(root, 'snapshot.sqlite');
   await db.connection.backup(snapshot);
   const backupPath = join(root, 'respaldo.zip');
@@ -52,8 +63,7 @@ try {
   if (restoredCount !== 1) throw new Error('El respaldo restaurado no conserva el lote.');
   db.close();
   console.log(JSON.stringify({ batchId: processed.batchId, validLines: batch.valid_lines, totalAmountCents: batch.total_amount_cents,
-    detailReport: reports.detailPath, totalsReport: reports.totalsPath, backupValidated: true }));
+    detailReport: reports.detailPath, totalsReport: reports.totalsPath, backupValidated: true, recordsPersisted: false }));
 } finally {
-  await rm(root, { recursive: true, force: true });
-  process.exitCode = 0;
+  await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 }

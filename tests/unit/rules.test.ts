@@ -3,9 +3,9 @@ import { PayrollType } from '../../src/shared/enums/payroll.js';
 import type { ParsedPayrollRecord } from '../../src/shared/types/payroll.js';
 import { ConceptRuleEngine, type ConceptRule } from '../../src/main/services/ConceptRuleEngine.js';
 
-const record: ParsedPayrollRecord = { lineNumber: 1, component: '21111', fundingSource: '06', employeeNumber: '1', employeeName: 'SINTETICO',
+const record: ParsedPayrollRecord = { lineNumber: 1, dependencyKey: '21111061-06', employeeNumber: '1', employeeName: 'SINTETICO',
   positionName: 'PUESTO', movementType: 'D', movementClassifier: '2', conceptCode: '101', conceptDescriptionOriginal: 'I S R POR SALARIOS',
-  amountRaw: '790.20', accountCode: 'CUENTA', controlCode: 'CO', finalIndicator: '1' };
+  amountRaw: '790.20', accountCode: 'CUENTA', fundingSource: 'CO', paymentCenter: '1' };
 const base: ConceptRule = { id: 1, payroll_type: null, concept_code_equals: null, description_equals: null,
   description_contains: 'ISR', description_regex: null, account_equals: null, account_starts_with: null,
   movement_type_equals: null, variant_code: 'GENERAL', variant_name: 'General', priority: 100, valid_from: null, valid_to: null };

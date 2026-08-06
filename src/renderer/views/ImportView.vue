@@ -93,7 +93,7 @@ async function chooseExportDirectory(): Promise<void> {
     const selected = await window.sefiplanApi.selectExportDirectory();
     if (selected) {
       exportDirectory.value = selected;
-      statusMessage.value = `Los reportes se guardarán en ${selected.name}.`;
+      statusMessage.value = `Se usará ${selected.name} como carpeta raíz; los reportes se organizarán por año y quincena.`;
     }
   } catch (cause) {
     showError(errorMessage(cause, 'No se pudo seleccionar la carpeta de reportes.'));

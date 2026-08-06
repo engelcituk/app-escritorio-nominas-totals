@@ -56,7 +56,7 @@
 .preview-record__details summary { width: max-content; color: #4b5565; cursor: pointer; font-size: 0.78rem; font-weight: 650; }
 .preview-record__details summary:hover { color: #5e1128; }
 .preview-record__details summary:focus-visible { border-radius: 0.2rem; outline: 3px solid rgba(200, 4, 60, 0.22); outline-offset: 2px; }
-.preview-record__details dl { display: grid; grid-template-columns: minmax(220px, 2fr) repeat(2, minmax(120px, 1fr)); gap: 0.75rem; margin: 0.7rem 0 0; padding: 0.75rem; background: #f7f8fa; }
+.preview-record__details dl { display: grid; grid-template-columns: repeat(2, minmax(180px, 1fr)); gap: 0.75rem; margin: 0.7rem 0 0; padding: 0.75rem; background: #f7f8fa; }
 .preview-record__details dl > div { min-width: 0; }
 .preview-record__details dt { color: #667085; font-size: 0.72rem; font-weight: 600; text-transform: uppercase; }
 .preview-record__details dd { margin: 0.2rem 0 0; overflow-wrap: anywhere; font-size: 0.84rem; font-weight: 650; }

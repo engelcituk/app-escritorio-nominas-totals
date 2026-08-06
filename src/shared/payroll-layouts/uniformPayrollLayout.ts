@@ -7,9 +7,7 @@ export const UNIFORM_PAYROLL_LAYOUT = {
   minimumColumns: 22,
   expectedColumns: 22,
   fields: {
-    // Provisional: pending confirmation from the source-system data dictionary.
-    component: 0,
-    fundingSource: 1,
+    dependencyKeyParts: [0, 1, 2, 3],
     employeeNumber: 4,
     employeeName: 11,
     positionName: 12,
@@ -19,8 +17,8 @@ export const UNIFORM_PAYROLL_LAYOUT = {
     conceptDescription: 17,
     amount: 18,
     accountCode: 19,
-    controlCode: 20,
-    finalIndicator: 21,
+    fundingSource: 20,
+    paymentCenter: 21,
   },
 } as const;
 
@@ -28,9 +26,10 @@ export type UniformField = keyof typeof UNIFORM_PAYROLL_LAYOUT.fields;
 
 export function mapUniformColumns(columns: readonly string[]): Omit<ParsedPayrollRecord, 'lineNumber'> {
   const f = UNIFORM_PAYROLL_LAYOUT.fields;
+  const dependencyParts = f.dependencyKeyParts.map((index) => columns[index]?.trim() ?? '');
+  const dependencyKey = `${dependencyParts[0]}${dependencyParts[1]}${dependencyParts[2]}-${dependencyParts[3]}`;
   return {
-    component: columns[f.component]?.trim() ?? '',
-    fundingSource: columns[f.fundingSource]?.trim() ?? '',
+    dependencyKey,
     employeeNumber: columns[f.employeeNumber]?.trim() ?? '',
     employeeName: columns[f.employeeName]?.trim() ?? '',
     positionName: columns[f.positionName]?.trim() ?? '',
@@ -40,7 +39,7 @@ export function mapUniformColumns(columns: readonly string[]): Omit<ParsedPayrol
     conceptDescriptionOriginal: columns[f.conceptDescription]?.trim() ?? '',
     amountRaw: columns[f.amount]?.trim() ?? '',
     accountCode: columns[f.accountCode]?.trim() ?? '',
-    controlCode: columns[f.controlCode]?.trim() ?? '',
-    finalIndicator: columns[f.finalIndicator]?.trim() ?? '',
+    fundingSource: columns[f.fundingSource]?.trim() ?? '',
+    paymentCenter: columns[f.paymentCenter]?.trim() ?? '',
   };
 }

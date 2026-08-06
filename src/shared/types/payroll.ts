@@ -9,8 +9,7 @@ export interface SelectedFile {
 
 export interface ParsedPayrollRecord {
   lineNumber: number;
-  component: string;
-  fundingSource: string;
+  dependencyKey: string;
   employeeNumber: string;
   employeeName: string;
   positionName: string;
@@ -20,8 +19,8 @@ export interface ParsedPayrollRecord {
   conceptDescriptionOriginal: string;
   amountRaw: string;
   accountCode: string;
-  controlCode: string;
-  finalIndicator: string;
+  fundingSource: string;
+  paymentCenter: string;
 }
 
 export interface PreviewRecord extends ParsedPayrollRecord {

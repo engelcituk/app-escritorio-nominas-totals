@@ -38,14 +38,6 @@ export const MIGRATIONS: readonly Migration[] = [
         total_amount_cents INTEGER NOT NULL DEFAULT 0, started_at TEXT, completed_at TEXT, replaced_batch_id INTEGER REFERENCES payroll_batches(id),
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
-      CREATE TABLE IF NOT EXISTS payroll_records (
-        id INTEGER PRIMARY KEY, batch_id INTEGER NOT NULL REFERENCES payroll_batches(id) ON DELETE CASCADE, line_number INTEGER NOT NULL,
-        component TEXT, funding_source TEXT, employee_number TEXT, employee_name TEXT, position_name TEXT,
-        movement_type TEXT, movement_classifier TEXT, concept_code TEXT, concept_description_original TEXT,
-        concept_description_normalized TEXT, concept_description_canonical TEXT, concept_variant TEXT, account_code TEXT,
-        amount_cents INTEGER, control_code TEXT, final_indicator TEXT, status TEXT NOT NULL, concept_rule_id INTEGER,
-        exclusion_rule_id INTEGER, exclusion_category TEXT, exclusion_reason TEXT, validation_error TEXT, raw_line TEXT, created_at TEXT NOT NULL
-      );
       CREATE TABLE IF NOT EXISTS batch_totals (
         id INTEGER PRIMARY KEY, batch_id INTEGER NOT NULL REFERENCES payroll_batches(id) ON DELETE CASCADE,
         concept_family_id INTEGER NOT NULL REFERENCES concept_families(id), concept_variant TEXT, concept_code TEXT,
@@ -62,10 +54,6 @@ export const MIGRATIONS: readonly Migration[] = [
       );
       CREATE INDEX IF NOT EXISTS idx_batches_period ON payroll_batches(year, fortnight, payroll_type);
       CREATE INDEX IF NOT EXISTS idx_batches_hash ON payroll_batches(file_hash_sha256);
-      CREATE INDEX IF NOT EXISTS idx_records_status ON payroll_records(batch_id, status);
-      CREATE INDEX IF NOT EXISTS idx_records_concept ON payroll_records(batch_id, concept_code);
-      CREATE INDEX IF NOT EXISTS idx_records_account ON payroll_records(batch_id, account_code);
-      CREATE INDEX IF NOT EXISTS idx_records_employee ON payroll_records(employee_number);
       CREATE INDEX IF NOT EXISTS idx_totals_group ON batch_totals(batch_id, account_code, concept_variant);
     `,
   },

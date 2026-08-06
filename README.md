@@ -6,6 +6,12 @@ Aplicación de escritorio local para inspeccionar archivos TXT institucionales d
 
 Ejecuta `release/SEFIPLAN Nómina Setup 0.1.0.exe` y sigue el asistente. La base SQLite se guarda en el directorio de datos de usuario de Windows, nunca en `Program Files`. No se requiere conexión a internet.
 
+## Reiniciar los datos locales
+
+Con la aplicación y el proceso de desarrollo completamente cerrados, se puede renombrar o eliminar `C:\Users\<usuario>\AppData\Roaming\sefiplan-nomina`. Al iniciar de nuevo, Electron recrea la carpeta y la aplicación crea una base SQLite limpia con el esquema inicial.
+
+Este reinicio elimina el histórico, configuraciones, reglas personalizadas y respaldos automáticos guardados dentro de esa carpeta. No elimina los reportes Excel generados en Documentos ni en otra carpeta seleccionada. Para conservar una recuperación sencilla, es preferible renombrar la carpeta antes de eliminarla.
+
 ## Flujo principal
 
 1. Abre **Nueva importación**.
@@ -41,13 +47,14 @@ npm run benchmark:fixture -- 500000
 - `contextIsolation: true`, `nodeIntegration: false`, sandbox y CSP.
 - El Renderer solo usa una API explícita de preload; no recibe rutas para leer o escribir libremente.
 - Todos los payloads IPC relevantes se validan con Zod.
-- El TXT se procesa por stream en un worker y SQLite se escribe en transacciones por lotes.
+- El TXT se procesa por streaming: la primera pasada calcula los totales y la segunda genera los Excel.
 - Los importes se almacenan y suman como centavos enteros.
-- Las líneas desplazadas, importes inválidos y registros excluidos se conservan para auditoría.
+- SQLite conserva lotes y totales agrupados, pero no persiste cada movimiento de nómina.
+- Las líneas desplazadas, importes inválidos y registros excluidos se documentan en los Excel para auditoría.
 - La restauración valida ZIP, manifiesto, versión y esquema, y crea un respaldo automático previo.
 
-## Supuestos pendientes
+## Estructura confirmada del TXT
 
-Los índices 0 (componente), 1 (fuente de financiamiento) y 4 (número de empleado) son provisionales hasta recibir el diccionario oficial. Las reglas de exclusión iniciales permanecen sin valores mágicos: deben confirmarse institucionalmente. El icono oficial del instalador también requiere un activo de identidad autorizado.
+Los índices 0 a 3 forman la clave dependencia con el formato `parte1 + parte2 + parte3 + "-" + parte4`; por ejemplo, `21111|06|1|06` se convierte en `21111061-06`. El índice 4 es el número de empleado, el índice 20 es la fuente de financiamiento y el índice 21 es el centro de pago. Las reglas de exclusión iniciales permanecen sin valores mágicos: deben confirmarse institucionalmente. El icono oficial del instalador también requiere un activo de identidad autorizado.
 
 Consulta [arquitectura y plan](docs/01-arquitectura-y-plan.md) y [sistema visual](docs/02-sistema-visual.md) para las decisiones completas.
