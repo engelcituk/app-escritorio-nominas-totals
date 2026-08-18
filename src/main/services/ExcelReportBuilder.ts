@@ -52,7 +52,7 @@ export class ExcelReportBuilder {
   constructor(private readonly database: Database.Database, private readonly outputDirectory: string) {}
 
   async build(batchId: number, sourceFilePath: string): Promise<{
-    detailPath: string; totalsPath: string; exportedTotal: number;
+    sourcePath: string; detailPath: string; totalsPath: string; exportedTotal: number;
   }> {
     const batch = this.database.prepare('SELECT * FROM payroll_batches WHERE id = ?').get(batchId) as BatchRow | undefined;
     if (!batch) throw new Error('No se encontró el lote para generar sus reportes.');
@@ -61,6 +61,7 @@ export class ExcelReportBuilder {
       `Q${String(batch.fortnight).padStart(2, '0')}`);
     await fs.mkdir(periodDirectory, { recursive: true });
     const suffix = `QNA_${String(batch.fortnight).padStart(2, '0')}_${batch.year}_${batch.payroll_type}_A${batch.source_order}_L${batch.id}`;
+    const sourcePath = join(periodDirectory, `TXT_Completo_${suffix}.xlsx`);
     const detailPath = join(periodDirectory, `Detalle_Conceptos_${suffix}.xlsx`);
     const totalsPath = join(periodDirectory, `Totales_Conceptos_${suffix}.xlsx`);
 
@@ -75,36 +76,46 @@ export class ExcelReportBuilder {
       Array<{ employee_number: string }>).map((item) => item.employee_number));
     const evaluator = new PayrollRecordEvaluator(new ConceptMatcher(rules), selectedConceptIds, retainedEmployees);
 
+    const sourceWorkbook = new ExcelJS.stream.xlsx.WorkbookWriter({ filename: sourcePath, useStyles: true, useSharedStrings: true });
     const detailWorkbook = new ExcelJS.stream.xlsx.WorkbookWriter({ filename: detailPath, useStyles: true, useSharedStrings: true });
     const totalsWorkbook = new ExcelJS.stream.xlsx.WorkbookWriter({ filename: totalsPath, useStyles: true, useSharedStrings: true });
+    let sourceSheetIndex = 1;
+    let sourceRowCount = 0;
+    let sourceIssueCount = 0;
+    let sourceSheet = this.addPayrollDataSheet(sourceWorkbook, 'Contenido TXT');
+    const sourceIssuesSheet = this.addSourceIssueSheet(sourceWorkbook);
     let detailSheetIndex = 1;
     let detailRowCount = 0;
-    let detailSheet = this.addDetailSheet(detailWorkbook, 'Detalle');
+    let detailSheet = this.addPayrollDataSheet(detailWorkbook, 'Detalle');
     const exportedTotal = this.addSummaryAndAccountSheets(totalsWorkbook, batch);
     const excludedSheet = this.addIssueSheet(totalsWorkbook, 'Excluidos');
     const errorSheet = this.addIssueSheet(totalsWorkbook, 'Errores');
 
     for await (const item of new TxtStreamParser().parse(sourceFilePath)) {
+      if (sourceRowCount >= MAX_DATA_ROWS_PER_SHEET) {
+        sourceSheet.commit();
+        sourceSheetIndex += 1;
+        sourceRowCount = 0;
+        sourceSheet = this.addPayrollDataSheet(sourceWorkbook, `Contenido_${sourceSheetIndex}`);
+      }
       if (detailRowCount >= MAX_DATA_ROWS_PER_SHEET) {
         detailSheet.commit();
         detailSheetIndex += 1;
         detailRowCount = 0;
-        detailSheet = this.addDetailSheet(detailWorkbook, `Detalle_${detailSheetIndex}`);
+        detailSheet = this.addPayrollDataSheet(detailWorkbook, `Detalle_${detailSheetIndex}`);
       }
 
       if (!item.record) {
+        this.addSourceIssueRow(sourceIssuesSheet, item.lineNumber, item.rawLine, item.error ?? 'Línea inválida.');
+        sourceIssueCount += 1;
         this.addIssueRow(errorSheet, item.lineNumber, null, null, null, item.error ?? 'Línea inválida.');
       } else {
         const evaluation = evaluator.evaluate(item.record);
+        const sourceColumns = this.toSourceColumns(item.rawLine, evaluation.amountCents);
+        this.addPayrollDataRow(sourceSheet, sourceColumns);
+        sourceRowCount += 1;
         if (evaluation.status === RecordStatus.VALID) {
-          const sourceColumns: Array<string | number> = item.rawLine.split(UNIFORM_PAYROLL_LAYOUT.delimiter)
-            .map((value) => value.trim());
-          sourceColumns[UNIFORM_PAYROLL_LAYOUT.fields.amount] = evaluation.amountCents === null
-            ? ''
-            : evaluation.amountCents / 100;
-          const row = detailSheet.addRow(sourceColumns);
-          row.getCell(UNIFORM_PAYROLL_LAYOUT.fields.amount + 1).numFmt = '$#,##0.00;[Red]-$#,##0.00';
-          row.commit();
+          this.addPayrollDataRow(detailSheet, sourceColumns);
           detailRowCount += 1;
         } else if (evaluation.status === RecordStatus.EXCLUDED) {
           this.addIssueRow(excludedSheet, item.lineNumber, item.record.employeeNumber, item.record.conceptDescriptionOriginal,
@@ -116,22 +127,27 @@ export class ExcelReportBuilder {
       }
     }
 
+    sourceSheet.commit();
+    if (sourceIssueCount === 0) sourceIssuesSheet.addRow({ issue: 'No se detectaron líneas incompatibles.' }).commit();
+    sourceIssuesSheet.commit();
+    this.addMetadataSheet(sourceWorkbook, batch, sourceSheetIndex, 'Hojas de contenido');
     detailSheet.commit();
     this.addMetadataSheet(detailWorkbook, batch, detailSheetIndex);
     excludedSheet.commit();
     errorSheet.commit();
     this.addAuditSheet(totalsWorkbook, batch, exportedTotal);
-    await Promise.all([detailWorkbook.commit(), totalsWorkbook.commit()]);
+    await Promise.all([sourceWorkbook.commit(), detailWorkbook.commit(), totalsWorkbook.commit()]);
 
     const insert = this.database.prepare(`INSERT INTO generated_reports(batch_id, report_type, filename, file_path, file_hash_sha256, generated_at)
       VALUES (?, ?, ?, ?, ?, ?)`);
     const now = new Date().toISOString();
+    insert.run(batchId, 'SOURCE', basename(sourcePath), sourcePath, await calculateFileSha256(sourcePath), now);
     insert.run(batchId, 'DETAIL', basename(detailPath), detailPath, await calculateFileSha256(detailPath), now);
     insert.run(batchId, 'TOTALS', basename(totalsPath), totalsPath, await calculateFileSha256(totalsPath), now);
-    return { detailPath, totalsPath, exportedTotal };
+    return { sourcePath, detailPath, totalsPath, exportedTotal };
   }
 
-  private addDetailSheet(workbook: ExcelJS.stream.xlsx.WorkbookWriter, name: string): ExcelJS.Worksheet {
+  private addPayrollDataSheet(workbook: ExcelJS.stream.xlsx.WorkbookWriter, name: string): ExcelJS.Worksheet {
     const sheet = workbook.addWorksheet(name, { views: [{ state: 'frozen', ySplit: 1 }] });
     sheet.columns = UNIFORM_PAYROLL_COLUMNS.map(({ header, width }) => ({ header, width }));
     sheet.autoFilter = { from: 'A1', to: 'V1' };
@@ -141,13 +157,44 @@ export class ExcelReportBuilder {
     return sheet;
   }
 
-  private addMetadataSheet(workbook: ExcelJS.stream.xlsx.WorkbookWriter, batch: BatchRow, detailSheetCount: number): void {
+  private toSourceColumns(rawLine: string, amountCents: number | null): Array<string | number> {
+    const sourceColumns: Array<string | number> = rawLine.split(UNIFORM_PAYROLL_LAYOUT.delimiter)
+      .map((value) => value.trim());
+    if (amountCents !== null) sourceColumns[UNIFORM_PAYROLL_LAYOUT.fields.amount] = amountCents / 100;
+    return sourceColumns;
+  }
+
+  private addPayrollDataRow(sheet: ExcelJS.Worksheet, values: Array<string | number>): void {
+    const row = sheet.addRow(values);
+    row.getCell(UNIFORM_PAYROLL_LAYOUT.fields.amount + 1).numFmt = '$#,##0.00;[Red]-$#,##0.00';
+    row.commit();
+  }
+
+  private addSourceIssueSheet(workbook: ExcelJS.stream.xlsx.WorkbookWriter): ExcelJS.Worksheet {
+    const sheet = workbook.addWorksheet('Líneas no compatibles', { views: [{ state: 'frozen', ySplit: 1 }] });
+    sheet.columns = [
+      { header: 'Línea de origen', key: 'line', width: 18 },
+      { header: 'Contenido original', key: 'content', width: 80 },
+      { header: 'Problema', key: 'issue', width: 55 },
+    ];
+    styleHeader(sheet.getRow(1), 3);
+    sheet.getRow(1).commit();
+    sheet.autoFilter = { from: 'A1', to: 'C1' };
+    return sheet;
+  }
+
+  private addSourceIssueRow(sheet: ExcelJS.Worksheet, line: number, content: string, issue: string): void {
+    sheet.addRow({ line, content, issue }).commit();
+  }
+
+  private addMetadataSheet(workbook: ExcelJS.stream.xlsx.WorkbookWriter, batch: BatchRow, sheetCount: number,
+    sheetCountLabel = 'Hojas de detalle'): void {
     const metadata = workbook.addWorksheet('Metadatos', { views: [{ showGridLines: false }] });
     configureKeyValueSheet(metadata, 24, 68);
     const rows: Array<[string, string | number | Date]> = [
       ['Archivo origen', batch.original_filename], ['Hash SHA-256', batch.file_hash_sha256], ['Fecha de proceso', new Date()],
       ['Versión de aplicación', '0.1.0'], ['Layout', batch.layout_code], ['Versión de layout', batch.layout_version],
-      ['Hojas de detalle', detailSheetCount], ['Versión del lote', batch.version], ['Intento de procesamiento', batch.attempt],
+      [sheetCountLabel, sheetCount], ['Versión del lote', batch.version], ['Intento de procesamiento', batch.attempt],
     ];
     for (const values of rows) {
       const row = metadata.addRow(values);

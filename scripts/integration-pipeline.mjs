@@ -77,8 +77,18 @@ try {
     .run(batch.total_lines, batch.valid_lines, batch.excluded_lines, batch.invalid_lines, batch.total_amount_cents, now, now, groupId);
   const groupReport = await new GroupReportBuilder(db.connection, outputDirectory).build(groupId);
   await stat(groupReport);
+  await stat(reports.sourcePath);
   await stat(reports.detailPath);
   await stat(reports.totalsPath);
+  const sourceWorkbook = new ExcelJS.Workbook();
+  await sourceWorkbook.xlsx.readFile(reports.sourcePath);
+  const source = sourceWorkbook.getWorksheet('Contenido TXT');
+  if (source?.getCell('E1').value !== 'Número de empleado' || source.getCell('E2').value !== '1001'
+    || source.getCell('L1').value !== 'Nombre del empleado' || source.getCell('L4').value !== 'PERSONA TRES'
+    || source.getCell('U1').value !== 'Fuente de financiamiento' || source.getCell('V1').value !== 'Centro de pago'
+    || source.rowCount !== 4) {
+    throw new Error('El reporte completo no conserva todas las líneas y columnas operativas del TXT.');
+  }
   const detailWorkbook = new ExcelJS.Workbook();
   await detailWorkbook.xlsx.readFile(reports.detailPath);
   const detail = detailWorkbook.getWorksheet('Detalle');
@@ -101,7 +111,8 @@ try {
   if (restoredCount !== 1) throw new Error('El respaldo restaurado no conserva el lote.');
   db.close();
   console.log(JSON.stringify({ batchId: processed.batchId, validLines: batch.valid_lines, totalAmountCents: batch.total_amount_cents,
-    detailReport: reports.detailPath, totalsReport: reports.totalsPath, groupReport, backupValidated: true, recordsPersisted: false }));
+    sourceReport: reports.sourcePath, detailReport: reports.detailPath, totalsReport: reports.totalsPath, groupReport,
+    backupValidated: true, recordsPersisted: false }));
 } finally {
   await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   app.quit();
