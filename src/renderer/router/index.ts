@@ -4,6 +4,15 @@ import ImportView from '../views/ImportView.vue';
 
 export default createRouter({
   history: createWebHashHistory(),
+  scrollBehavior(to, _from, savedPosition) {
+    if (savedPosition) return savedPosition;
+    if (to.hash) return {
+      el: to.hash,
+      top: 96,
+      behavior: typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+    };
+    return { top: 0 };
+  },
   routes: [
     { path: '/', name: 'home', component: HomeView, meta: { title: 'Inicio' } },
     { path: '/importar', name: 'import', component: ImportView, meta: { title: 'Nueva importación' } },
