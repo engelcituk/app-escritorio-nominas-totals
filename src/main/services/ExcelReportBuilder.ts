@@ -4,19 +4,16 @@ import type Database from 'better-sqlite3';
 import ExcelJS from 'exceljs';
 import type { PayrollType } from '../../shared/enums/payroll.js';
 import { RecordStatus } from '../../shared/enums/payroll.js';
-import { PAYROLL_FIELD_LABELS } from '../../shared/payroll-layouts/payrollFieldLabels.js';
-import type { ExclusionOptions } from '../../shared/types/payroll.js';
-import { ConceptRuleEngine, type ConceptRule } from './ConceptRuleEngine.js';
-import { ExclusionRuleEngine, type ExclusionRule } from './ExclusionRuleEngine.js';
+import { UNIFORM_PAYROLL_COLUMNS, UNIFORM_PAYROLL_LAYOUT } from '../../shared/payroll-layouts/uniformPayrollLayout.js';
+import { ConceptMatcher, type ConceptMatchRule } from './ConceptMatcher.js';
 import { calculateFileSha256 } from './FileHashService.js';
 import { PayrollRecordEvaluator } from './PayrollRecordEvaluator.js';
-import { getPeriodReportDirectory } from './ReportPathService.js';
 import { TxtStreamParser } from './TxtStreamParser.js';
 
 interface BatchRow {
-  id: number; year: number; fortnight: number; payroll_type: PayrollType; original_filename: string; file_hash_sha256: string;
+  id: number; group_id: number; source_order: number; year: number; fortnight: number; payroll_type: PayrollType; original_filename: string; file_hash_sha256: string;
   total_lines: number; valid_lines: number; excluded_lines: number; invalid_lines: number; matching_lines: number;
-  total_amount_cents: number; layout_code: string; layout_version: number; version: number;
+  total_amount_cents: number; layout_code: string; layout_version: number; version: number; attempt: number;
 }
 
 const HEADER_FILL = 'FF5E1128';
@@ -54,22 +51,29 @@ function styleKeyValueRow(row: ExcelJS.Row): void {
 export class ExcelReportBuilder {
   constructor(private readonly database: Database.Database, private readonly outputDirectory: string) {}
 
-  async build(batchId: number, sourceFilePath: string, exclusions: ExclusionOptions): Promise<{
+  async build(batchId: number, sourceFilePath: string): Promise<{
     detailPath: string; totalsPath: string; exportedTotal: number;
   }> {
     const batch = this.database.prepare('SELECT * FROM payroll_batches WHERE id = ?').get(batchId) as BatchRow | undefined;
     if (!batch) throw new Error('No se encontró el lote para generar sus reportes.');
-    const periodDirectory = getPeriodReportDirectory(this.outputDirectory, batch.year, batch.fortnight);
+    const group = this.database.prepare(`SELECT version FROM import_groups WHERE id = ?`).get(batch.group_id) as { version: number };
+    const periodDirectory = join(this.outputDirectory, String(batch.year), 'Expedientes', `EXP-${batch.group_id}-v${group.version}`,
+      `Q${String(batch.fortnight).padStart(2, '0')}`);
     await fs.mkdir(periodDirectory, { recursive: true });
-    const suffix = `QNA_${String(batch.fortnight).padStart(2, '0')}_${batch.year}_${batch.payroll_type}`;
-    const detailPath = join(periodDirectory, `Detalle_Extraido_ISR_${suffix}.xlsx`);
-    const totalsPath = join(periodDirectory, `Totales_ISR_${suffix}.xlsx`);
+    const suffix = `QNA_${String(batch.fortnight).padStart(2, '0')}_${batch.year}_${batch.payroll_type}_A${batch.source_order}_L${batch.id}`;
+    const detailPath = join(periodDirectory, `Detalle_Conceptos_${suffix}.xlsx`);
+    const totalsPath = join(periodDirectory, `Totales_Conceptos_${suffix}.xlsx`);
 
-    const conceptRules = this.database.prepare(`SELECT * FROM concept_rules WHERE concept_family_id = 1 AND active = 1
-      ORDER BY priority`).all() as ConceptRule[];
-    const exclusionRules = this.database.prepare(`SELECT * FROM exclusion_rules WHERE active = 1 ORDER BY priority`).all() as ExclusionRule[];
-    const evaluator = new PayrollRecordEvaluator(new ConceptRuleEngine(conceptRules), new ExclusionRuleEngine(exclusionRules),
-      batch.payroll_type, exclusions);
+    const rules = this.database.prepare(`SELECT a.source_alias_id AS aliasId, c.source_concept_id AS conceptId,
+      c.concept_code AS conceptCode, c.concept_name AS conceptName, NULL AS groupId, c.group_code AS groupCode,
+      c.group_name AS groupName, c.operation_factor AS operationFactor, a.normalized_description AS normalizedDescription
+      FROM batch_alias_snapshots a JOIN batch_concept_snapshots c ON c.batch_id=a.batch_id AND c.source_concept_id=a.source_concept_id
+      WHERE a.batch_id=?`).all(batchId) as ConceptMatchRule[];
+    const selectedConceptIds = new Set((this.database.prepare(`SELECT source_concept_id FROM batch_concept_snapshots WHERE batch_id=? AND selected=1`)
+      .all(batchId) as Array<{ source_concept_id: number }>).map((item) => item.source_concept_id));
+    const retainedEmployees = new Set((this.database.prepare(`SELECT employee_number FROM batch_retained_employees WHERE batch_id=?`).all(batchId) as
+      Array<{ employee_number: string }>).map((item) => item.employee_number));
+    const evaluator = new PayrollRecordEvaluator(new ConceptMatcher(rules), selectedConceptIds, retainedEmployees);
 
     const detailWorkbook = new ExcelJS.stream.xlsx.WorkbookWriter({ filename: detailPath, useStyles: true, useSharedStrings: true });
     const totalsWorkbook = new ExcelJS.stream.xlsx.WorkbookWriter({ filename: totalsPath, useStyles: true, useSharedStrings: true });
@@ -89,32 +93,27 @@ export class ExcelReportBuilder {
       }
 
       if (!item.record) {
-        const row = detailSheet.addRow([
-          batch.year, batch.fortnight, batch.payroll_type, item.lineNumber, null, null, null, null, null,
-          null, null, null, null, null, null, null, RecordStatus.INVALID,
-        ]);
-        row.commit();
         this.addIssueRow(errorSheet, item.lineNumber, null, null, null, item.error ?? 'Línea inválida.');
       } else {
         const evaluation = evaluator.evaluate(item.record);
-        const row = detailSheet.addRow([
-          batch.year, batch.fortnight, batch.payroll_type, item.lineNumber, item.record.dependencyKey,
-          item.record.employeeNumber, item.record.employeeName, item.record.movementType, item.record.conceptCode,
-          item.record.conceptDescriptionOriginal, evaluation.classification.variant ?? null,
-          evaluation.amountCents === null ? null : evaluation.amountCents / 100, item.record.accountCode,
-          item.record.fundingSource, item.record.paymentCenter, evaluation.classification.ruleId ?? null, evaluation.status,
-        ]);
-        row.getCell(12).numFmt = '$#,##0.00;[Red]-$#,##0.00';
-        row.commit();
-        if (evaluation.status === RecordStatus.EXCLUDED) {
+        if (evaluation.status === RecordStatus.VALID) {
+          const sourceColumns: Array<string | number> = item.rawLine.split(UNIFORM_PAYROLL_LAYOUT.delimiter)
+            .map((value) => value.trim());
+          sourceColumns[UNIFORM_PAYROLL_LAYOUT.fields.amount] = evaluation.amountCents === null
+            ? ''
+            : evaluation.amountCents / 100;
+          const row = detailSheet.addRow(sourceColumns);
+          row.getCell(UNIFORM_PAYROLL_LAYOUT.fields.amount + 1).numFmt = '$#,##0.00;[Red]-$#,##0.00';
+          row.commit();
+          detailRowCount += 1;
+        } else if (evaluation.status === RecordStatus.EXCLUDED) {
           this.addIssueRow(excludedSheet, item.lineNumber, item.record.employeeNumber, item.record.conceptDescriptionOriginal,
-            evaluation.amountCents, evaluation.exclusion.reason ?? 'Excluido por una regla activa.');
+            evaluation.amountCents, evaluation.exclusionReason ?? 'Concepto no incluido en la totalización.');
         } else if (evaluation.status === RecordStatus.INVALID) {
           this.addIssueRow(errorSheet, item.lineNumber, item.record.employeeNumber, item.record.conceptDescriptionOriginal,
             evaluation.amountCents, evaluation.validationError ?? 'Registro inválido.');
         }
       }
-      detailRowCount += 1;
     }
 
     detailSheet.commit();
@@ -134,15 +133,10 @@ export class ExcelReportBuilder {
 
   private addDetailSheet(workbook: ExcelJS.stream.xlsx.WorkbookWriter, name: string): ExcelJS.Worksheet {
     const sheet = workbook.addWorksheet(name, { views: [{ state: 'frozen', ySplit: 1 }] });
-    sheet.columns = [
-      ['Año', 10], ['Quincena', 11], ['Tipo de nómina', 20], ['Línea de origen', 15],
-      [PAYROLL_FIELD_LABELS.dependencyKey, 24], ['Número de empleado', 19], ['Nombre del empleado', 34], ['Tipo de movimiento', 19],
-      ['Código de concepto', 19], ['Concepto original', 30], ['Variante ISR', 24], ['Importe', 16], ['Cuenta contable', 30],
-      [PAYROLL_FIELD_LABELS.fundingSource, 23], [PAYROLL_FIELD_LABELS.paymentCenter, 18], ['Regla aplicada', 17], ['Estatus', 16],
-    ].map(([header, width]) => ({ header: String(header), width: Number(width) }));
-    sheet.autoFilter = { from: 'A1', to: 'Q1' };
+    sheet.columns = UNIFORM_PAYROLL_COLUMNS.map(({ header, width }) => ({ header, width }));
+    sheet.autoFilter = { from: 'A1', to: 'V1' };
     const header = sheet.getRow(1);
-    styleHeader(header, 17);
+    styleHeader(header, UNIFORM_PAYROLL_COLUMNS.length);
     header.commit();
     return sheet;
   }
@@ -153,7 +147,7 @@ export class ExcelReportBuilder {
     const rows: Array<[string, string | number | Date]> = [
       ['Archivo origen', batch.original_filename], ['Hash SHA-256', batch.file_hash_sha256], ['Fecha de proceso', new Date()],
       ['Versión de aplicación', '0.1.0'], ['Layout', batch.layout_code], ['Versión de layout', batch.layout_version],
-      ['Hojas de detalle', detailSheetCount], ['Versión del lote', batch.version],
+      ['Hojas de detalle', detailSheetCount], ['Versión del lote', batch.version], ['Intento de procesamiento', batch.attempt],
     ];
     for (const values of rows) {
       const row = metadata.addRow(values);
@@ -167,21 +161,28 @@ export class ExcelReportBuilder {
   private addSummaryAndAccountSheets(workbook: ExcelJS.stream.xlsx.WorkbookWriter, batch: BatchRow): number {
     const summary = workbook.addWorksheet('Resumen', { views: [{ showGridLines: false }] });
     configureKeyValueSheet(summary, 30, 48);
+    const signed = this.database.prepare(`SELECT
+      COALESCE(SUM(CASE WHEN operation_factor = 1 THEN total_amount_cents ELSE 0 END), 0) AS additions,
+      COALESCE(SUM(CASE WHEN operation_factor = -1 THEN total_amount_cents ELSE 0 END), 0) AS refunds
+      FROM batch_totals WHERE batch_id = ?`).get(batch.id) as { additions: number; refunds: number };
     const summaryRows: Array<[string, string | number | Date]> = [
-      ['Año', batch.year], ['Quincena', batch.fortnight], ['Tipo de nómina', batch.payroll_type], ['Familia procesada', 'ISR'],
+      ['Año', batch.year], ['Quincena', batch.fortnight], ['Tipo de nómina', batch.payroll_type],
       ['Archivo origen', batch.original_filename], ['Total de líneas', batch.total_lines], ['Registros válidos', batch.valid_lines],
-      ['Registros ISR', batch.matching_lines], ['Registros excluidos', batch.excluded_lines], ['Registros inválidos', batch.invalid_lines],
-      ['TOTAL ISR A CONCILIAR', batch.total_amount_cents / 100], ['Fecha de procesamiento', new Date()],
+      ['Registros catalogados', batch.matching_lines], ['Registros excluidos', batch.excluded_lines], ['Registros inválidos', batch.invalid_lines],
+      ['Conceptos que suman', signed.additions / 100], ['Conceptos que restan', signed.refunds / 100],
+      ['TOTAL A CONCILIAR', batch.total_amount_cents / 100], ['Fecha de procesamiento', new Date()],
       ['Versión del layout', batch.layout_version], ['Versión de la aplicación', '0.1.0'],
     ];
     for (const values of summaryRows) {
       const row = summary.addRow(values);
       styleKeyValueRow(row);
-      if (['Total de líneas', 'Registros válidos', 'Registros ISR', 'Registros excluidos', 'Registros inválidos'].includes(values[0])) {
+      if (['Total de líneas', 'Registros válidos', 'Registros catalogados', 'Registros excluidos', 'Registros inválidos'].includes(values[0])) {
         row.getCell(2).numFmt = '#,##0';
-      } else if (typeof values[1] === 'number' && values[0] !== 'TOTAL ISR A CONCILIAR') row.getCell(2).numFmt = '0';
+      } else if (['Conceptos que suman', 'Conceptos que restan'].includes(values[0])) {
+        row.getCell(2).numFmt = '$#,##0.00;[Red]-$#,##0.00';
+      } else if (typeof values[1] === 'number' && values[0] !== 'TOTAL A CONCILIAR') row.getCell(2).numFmt = '0';
       if (values[0] === 'Fecha de procesamiento') row.getCell(2).numFmt = 'yyyy-mm-dd hh:mm:ss';
-      if (values[0] === 'TOTAL ISR A CONCILIAR') {
+      if (values[0] === 'TOTAL A CONCILIAR') {
         row.height = 27;
         for (const cell of [row.getCell(1), row.getCell(2)]) {
           cell.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 12 };
@@ -198,27 +199,30 @@ export class ExcelReportBuilder {
     const accounts = workbook.addWorksheet('Totales por cuenta', { views: [{ state: 'frozen', ySplit: 1 }] });
     accounts.columns = [
       { header: 'Cuenta contable', key: 'account', width: 30 }, { header: 'Código', key: 'code', width: 14 },
-      { header: 'Descripción', key: 'description', width: 30 }, { header: 'Variante ISR', key: 'variant', width: 24 },
-      { header: 'Movimiento', key: 'movement', width: 14 }, { header: 'Registros', key: 'count', width: 14 },
-      { header: 'Importe total', key: 'total', width: 18 }, { header: '% del total', key: 'percentage', width: 15 },
+      { header: 'Descripción origen', key: 'description', width: 30 }, { header: 'Concepto', key: 'concept', width: 28 },
+      { header: 'Grupo', key: 'group', width: 20 },
+      { header: 'Movimiento', key: 'movement', width: 14 }, { header: 'Operación', key: 'operation', width: 13 },
+      { header: 'Registros', key: 'count', width: 14 }, { header: 'Importe original', key: 'original', width: 18 },
+      { header: 'Contribución', key: 'total', width: 18 }, { header: '% del neto', key: 'percentage', width: 15 },
     ];
     const header = accounts.getRow(1);
-    styleHeader(header, 8);
+    styleHeader(header, 11);
     header.commit();
-    const totals = this.database.prepare(`SELECT * FROM batch_totals WHERE batch_id = ? ORDER BY account_code, concept_variant`)
+    const totals = this.database.prepare(`SELECT * FROM batch_totals WHERE batch_id = ? ORDER BY account_code, concept_name`)
       .all(batch.id) as Array<Record<string, string | number>>;
     let exportedTotal = 0;
     for (const item of totals) {
       const amount = Number(item.total_amount_cents);
       exportedTotal += amount;
-      const row = accounts.addRow({ account: item.account_code, code: item.concept_code, description: item.concept_description,
-        variant: item.concept_variant, movement: item.movement_type, count: item.record_count, total: amount / 100,
+      const row = accounts.addRow({ account: item.account_code, code: item.source_payroll_code, description: item.source_description,
+        concept: item.concept_name, group: item.group_name ?? 'Sin grupo', movement: item.movement_type, operation: Number(item.operation_factor) === -1 ? 'RESTA' : 'SUMA',
+        count: item.record_count, original: Number(item.original_amount_cents) / 100, total: amount / 100,
         percentage: batch.total_amount_cents ? amount / batch.total_amount_cents : 0 });
-      row.getCell(7).numFmt = '$#,##0.00;[Red]-$#,##0.00';
-      row.getCell(8).numFmt = '0.00%';
+      row.getCell(9).numFmt = '$#,##0.00;[Red]-$#,##0.00'; row.getCell(10).numFmt = '$#,##0.00;[Red]-$#,##0.00';
+      row.getCell(11).numFmt = '0.00%';
       row.commit();
     }
-    accounts.autoFilter = { from: 'A1', to: 'H1' };
+    accounts.autoFilter = { from: 'A1', to: 'K1' };
     accounts.commit();
     return exportedTotal;
   }

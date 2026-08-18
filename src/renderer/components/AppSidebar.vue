@@ -4,9 +4,9 @@ defineEmits<{ toggle: [] }>();
 
 const entries = [
   ['/', 'bi-house-door', 'Inicio'], ['/importar', 'bi-file-earmark-arrow-up', 'Nueva importación'],
-  ['/historico', 'bi-clock-history', 'Histórico'], ['/consolidado', 'bi-table', 'Consolidado quincenal'],
-  ['/matriz-anual', 'bi-calendar3', 'Matriz anual'], ['/reglas-isr', 'bi-funnel', 'Reglas de ISR'],
-  ['/reglas-exclusion', 'bi-slash-circle', 'Reglas de exclusión'], ['/configuracion', 'bi-gear', 'Configuración'],
+  ['/historico', 'bi-clock-history', 'Histórico'], ['/consolidado', 'bi-table', 'Consolidado'],
+  ['/matriz-anual', 'bi-calendar3', 'Matriz anual'], ['/catalogo-conceptos', 'bi-journal-check', 'Catálogo de conceptos'],
+  ['/documentacion', 'bi-book', 'Documentación'], ['/configuracion', 'bi-gear', 'Configuración'],
   ['/respaldos', 'bi-shield-check', 'Respaldos'],
 ] as const;
 </script>

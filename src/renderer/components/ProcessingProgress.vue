@@ -7,7 +7,7 @@ const labels: Record<string, string> = { INSPECTING: 'Inspeccionando', VALIDATIN
 </script>
 <template>
   <div class="processing-panel" aria-live="polite">
-    <div class="d-flex justify-content-between align-items-end mb-2"><div><span class="eyebrow">Etapa actual</span><strong>{{ labels[progress.stage] ?? progress.stage }}</strong></div><strong>{{ progress.percentage.toFixed(1) }}%</strong></div>
+    <div class="d-flex justify-content-between align-items-end mb-2"><div><span class="eyebrow">Etapa actual</span><strong>{{ labels[progress.stage] ?? progress.stage }}</strong><small v-if="progress.totalFiles" class="d-block">Archivo {{ progress.activeFileIndex }} de {{ progress.totalFiles }} · {{ progress.activeFilename }}</small></div><strong>{{ progress.percentage.toFixed(1) }}%</strong></div>
     <div class="progress" role="progressbar" :aria-valuenow="progress.percentage" aria-valuemin="0" aria-valuemax="100"><div class="progress-bar" :style="{ width: `${progress.percentage}%` }" /></div>
     <dl class="progress-metrics"><div><dt>Líneas</dt><dd>{{ progress.linesProcessed.toLocaleString('es-MX') }}</dd></div><div><dt>Válidos</dt><dd>{{ progress.validRecords.toLocaleString('es-MX') }}</dd></div><div><dt>Excluidos</dt><dd>{{ progress.excludedRecords.toLocaleString('es-MX') }}</dd></div><div><dt>Errores</dt><dd>{{ progress.invalidRecords.toLocaleString('es-MX') }}</dd></div></dl>
   </div>

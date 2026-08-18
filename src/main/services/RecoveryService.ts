@@ -4,7 +4,9 @@ export class RecoveryService {
   constructor(private readonly database: Database.Database) {}
 
   recoverInterruptedBatches(): number {
-    return this.database.prepare(`UPDATE payroll_batches SET status = 'INTERRUPTED', updated_at = ? WHERE status = 'PROCESSING'`)
-      .run(new Date().toISOString()).changes;
+    const now = new Date().toISOString();
+    const batches = this.database.prepare(`UPDATE payroll_batches SET status = 'INTERRUPTED', updated_at = ? WHERE status = 'PROCESSING'`).run(now).changes;
+    this.database.prepare(`UPDATE import_groups SET status = 'PARTIAL', updated_at = ? WHERE status = 'PROCESSING'`).run(now);
+    return batches;
   }
 }

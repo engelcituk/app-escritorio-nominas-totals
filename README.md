@@ -1,6 +1,6 @@
 # SEFIPLAN Nómina
 
-Aplicación de escritorio local para inspeccionar archivos TXT institucionales de nómina, clasificar ISR, conservar exclusiones y errores, persistir lotes auditables y generar reportes Excel conciliados.
+Aplicación de escritorio local para inspeccionar uno o varios TXT institucionales de nómina, seleccionar conceptos desde un catálogo auditable y generar reportes Excel conciliados.
 
 ## Instalación para usuario final
 
@@ -8,19 +8,21 @@ Ejecuta `release/SEFIPLAN Nómina Setup 0.1.0.exe` y sigue el asistente. La base
 
 ## Reiniciar los datos locales
 
-Con la aplicación y el proceso de desarrollo completamente cerrados, se puede renombrar o eliminar `C:\Users\<usuario>\AppData\Roaming\sefiplan-nomina`. Al iniciar de nuevo, Electron recrea la carpeta y la aplicación crea una base SQLite limpia con el esquema inicial.
+En desarrollo, si la aplicación detecta la base anterior ofrece **Archivar y recrear**: conserva el archivo con el sufijo `esquema-anterior-<fecha>` y crea una base SQLite limpia. También se puede cerrar completamente la aplicación y renombrar o eliminar manualmente `C:\Users\<usuario>\AppData\Roaming\sefiplan-nomina`.
 
-Este reinicio elimina el histórico, configuraciones, reglas personalizadas y respaldos automáticos guardados dentro de esa carpeta. No elimina los reportes Excel generados en Documentos ni en otra carpeta seleccionada. Para conservar una recuperación sencilla, es preferible renombrar la carpeta antes de eliminarla.
+Este reinicio elimina el histórico, la configuración, el catálogo personalizado y los respaldos automáticos guardados dentro de esa carpeta. No elimina los reportes Excel generados en Documentos ni en otra carpeta seleccionada. Para conservar una recuperación sencilla, es preferible renombrar la carpeta antes de eliminarla.
+
+La ampliación de expedientes multiarchivo redefine directamente la migración inicial porque el producto continúa en desarrollo. Una base o respaldo creado con el esquema anterior no es compatible: debe cerrarse la aplicación y renombrarse la carpeta de datos antes de iniciar esta versión.
 
 ## Flujo principal
 
-1. Abre **Nueva importación**.
-2. Selecciona el TXT oficial.
-3. Confirma año, quincena, tipo de nómina e ISR.
-4. Revisa que el preflight sea compatible (mínimo 95 % de la muestra válida).
-5. Revisa las opciones de exclusión y elige la carpeta de reportes si corresponde.
-6. Procesa el archivo y espera a que detalle, totales y conciliación concluyan.
-7. Abre la carpeta de reportes o consulta el lote en **Histórico**.
+1. Abre **Nueva importación**, captura el año común y selecciona uno o varios TXT oficiales.
+2. Confirma quincena y tipo de nómina de cada archivo.
+3. Elige, de manera independiente por TXT, los conceptos detectados que deben totalizarse.
+4. Revisa que todos los archivos sean compatibles y que los hashes no estén duplicados.
+5. Captura y valida, si corresponde, los empleados retenidos dentro del TXT afectado.
+6. Revisa el resumen y procesa el expediente; los archivos se concilian secuencialmente.
+7. Abre los reportes individuales y el consolidado o consulta el **Histórico**.
 
 ## Desarrollo
 
@@ -55,6 +57,6 @@ npm run benchmark:fixture -- 500000
 
 ## Estructura confirmada del TXT
 
-Los índices 0 a 3 forman la clave dependencia con el formato `parte1 + parte2 + parte3 + "-" + parte4`; por ejemplo, `21111|06|1|06` se convierte en `21111061-06`. El índice 4 es el número de empleado, el índice 20 es la fuente de financiamiento y el índice 21 es el centro de pago. Las reglas de exclusión iniciales permanecen sin valores mágicos: deben confirmarse institucionalmente. El icono oficial del instalador también requiere un activo de identidad autorizado.
+Los índices 0 a 3 forman la clave dependencia con el formato `parte1 + parte2 + parte3 + "-" + parte4`; por ejemplo, `21111|06|1|06` se convierte en `21111061-06`. El índice 4 es el número de empleado, el penúltimo valor es la fuente de financiamiento y el último es el centro de pago; por ejemplo, `|CO|1`. El reconocimiento usa alias exactos normalizados del catálogo, sin coincidencias abiertas. El icono oficial del instalador requiere un activo de identidad autorizado.
 
 Consulta [arquitectura y plan](docs/01-arquitectura-y-plan.md) y [sistema visual](docs/02-sistema-visual.md) para las decisiones completas.

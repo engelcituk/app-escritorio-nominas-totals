@@ -4,170 +4,138 @@ import { parentPort, workerData } from 'node:worker_threads';
 import type { PayrollType, ProcessingStage } from '../../shared/enums/payroll.js';
 import { BatchStatus, ProcessingStage as Stage, RecordStatus } from '../../shared/enums/payroll.js';
 import { UNIFORM_PAYROLL_LAYOUT } from '../../shared/payroll-layouts/uniformPayrollLayout.js';
-import type { ExclusionOptions, ProcessingProgress } from '../../shared/types/payroll.js';
+import type { ProcessingProgress } from '../../shared/types/payroll.js';
 import { DatabaseService } from '../database/DatabaseService.js';
-import { ConceptRuleEngine, type ConceptRule } from '../services/ConceptRuleEngine.js';
-import { ExclusionRuleEngine, type ExclusionRule } from '../services/ExclusionRuleEngine.js';
+import { ACTIVE_CONCEPT_MATCHERS_SQL, ConceptMatcher, type ConceptMatchRule } from '../services/ConceptMatcher.js';
 import { calculateFileSha256 } from '../services/FileHashService.js';
 import { PayrollRecordEvaluator } from '../services/PayrollRecordEvaluator.js';
 import { TotalsService, type BatchTotalInput } from '../services/TotalsService.js';
 import { TxtStreamParser } from '../services/TxtStreamParser.js';
 
 interface WorkerPayload {
-  processId: string;
-  databasePath: string;
-  filePath: string;
-  year: number;
-  fortnight: number;
-  payrollType: PayrollType;
-  exclusions: ExclusionOptions;
-  duplicateAction?: 'CANCEL' | 'REPLACE' | 'NEW_VERSION';
+  processId: string; groupId: number; sourceOrder: number; databasePath: string; filePath: string; year: number;
+  fortnight: number; payrollType: PayrollType; selectedConceptIds: number[]; retainedEmployeeNumbers: string[];
+  missingAcknowledged: boolean; duplicateDecision?: 'REPROCESS';
 }
-
 interface Counters { total: number; valid: number; excluded: number; invalid: number; unclassified: number; matched: number }
 
 const payload = workerData as WorkerPayload;
 const port = parentPort!;
 if (!port) throw new Error('El procesador no pudo iniciar su canal de comunicación.');
 let cancelled = false;
-port.on('message', (message: { type: string }) => {
-  if (message.type === 'cancel') cancelled = true;
-});
+port.on('message', (message: { type: string }) => { if (message.type === 'cancel') cancelled = true; });
 
 function emitProgress(stage: ProcessingStage, counters: Counters, totalBytes: number, started: number, bytesProcessed: number): void {
-  const progress: ProcessingProgress = {
-    processId: payload.processId,
-    stage,
-    bytesProcessed: Math.min(bytesProcessed, totalBytes),
-    totalBytes,
+  const progress: ProcessingProgress = { processId: payload.processId, stage, bytesProcessed: Math.min(bytesProcessed, totalBytes), totalBytes,
     percentage: totalBytes ? Math.min(100, Math.round((bytesProcessed / totalBytes) * 10000) / 100) : 0,
-    linesProcessed: counters.total,
-    validRecords: counters.valid,
-    excludedRecords: counters.excluded,
-    invalidRecords: counters.invalid,
-    matchedRecords: counters.matched,
-    elapsedMilliseconds: Date.now() - started,
-  };
+    linesProcessed: counters.total, validRecords: counters.valid, excludedRecords: counters.excluded,
+    invalidRecords: counters.invalid, matchedRecords: counters.matched, elapsedMilliseconds: Date.now() - started };
   port.postMessage({ type: 'progress', progress });
 }
 
 async function run(): Promise<void> {
-  const databaseService = new DatabaseService(payload.databasePath);
-  const db = databaseService.connection;
-  const totalBytes = statSync(payload.filePath).size;
-  const started = Date.now();
+  const service = new DatabaseService(payload.databasePath); const db = service.connection;
+  const totalBytes = statSync(payload.filePath).size; const started = Date.now();
   const counters: Counters = { total: 0, valid: 0, excluded: 0, invalid: 0, unclassified: 0, matched: 0 };
   const totalsByGroup = new Map<string, BatchTotalInput>();
-  let recordsTotal = 0;
-  let batchId: number | null = null;
-  let bytesProcessed = 0;
-
+  const retainedStats = new Map<string, { name: string; found: number; excluded: number }>();
+  const retainedSet = new Set(payload.retainedEmployeeNumbers); const selected = new Set(payload.selectedConceptIds);
+  let recordsTotal = 0; let batchId: number | null = null; let bytesProcessed = 0;
   try {
     emitProgress(Stage.VALIDATING, counters, totalBytes, started, 0);
     const fileHash = await calculateFileSha256(payload.filePath);
-    const identical = db.prepare(`SELECT id, year, fortnight, payroll_type, version FROM payroll_batches
-      WHERE file_hash_sha256 = ? AND status NOT IN ('FAILED','CANCELLED') ORDER BY id DESC LIMIT 1`).get(fileHash) as
-      { id: number; year: number; fortnight: number; payroll_type: string; version: number } | undefined;
-    if (identical && !payload.duplicateAction) throw new Error(`DUPLICATE_FILE:${identical.id}`);
+    if (db.prepare(`SELECT id FROM payroll_batches WHERE group_id = ? AND file_hash_sha256 = ?
+      AND status NOT IN ('FAILED','CANCELLED')`).get(payload.groupId, fileHash)) throw new Error('DUPLICATE_IN_GROUP');
+    const identical = db.prepare(`SELECT id, lineage_batch_id, version FROM payroll_batches WHERE file_hash_sha256 = ?
+      AND status NOT IN ('FAILED','CANCELLED','SUPERSEDED') ORDER BY id DESC LIMIT 1`).get(fileHash) as
+      { id: number; lineage_batch_id: number | null; version: number } | undefined;
+    if (identical && payload.duplicateDecision !== 'REPROCESS') throw new Error(`DUPLICATE_FILE:${identical.id}`);
 
-    const previous = db.prepare(`SELECT id, version FROM payroll_batches WHERE year = ? AND fortnight = ? AND payroll_type = ?
-      AND concept_family_id = 1 AND status NOT IN ('FAILED','CANCELLED','SUPERSEDED') ORDER BY version DESC LIMIT 1`)
-      .get(payload.year, payload.fortnight, payload.payrollType) as { id: number; version: number } | undefined;
-    if (previous && !payload.duplicateAction) throw new Error(`DUPLICATE_PERIOD:${previous.id}`);
-    if (payload.duplicateAction === 'CANCEL' && (identical || previous)) throw new Error('PROCESS_CANCELLED_BY_DUPLICATE');
-
-    const version = previous ? previous.version + 1 : 1;
     const now = new Date().toISOString();
-    const inserted = db.prepare(`INSERT INTO payroll_batches(
-      year, fortnight, payroll_type, concept_family_id, layout_code, layout_version, original_filename,
-      original_file_path, file_size, file_hash_sha256, version, status, replaced_batch_id, started_at, created_at, updated_at
-    ) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, 'PROCESSING', ?, ?, ?, ?)`)
-      .run(payload.year, payload.fortnight, payload.payrollType, UNIFORM_PAYROLL_LAYOUT.code, UNIFORM_PAYROLL_LAYOUT.version,
-        basename(payload.filePath), payload.filePath, totalBytes, fileHash, version,
-        payload.duplicateAction === 'REPLACE' ? (previous?.id ?? null) : null, now, now, now);
+    const attempt = Number((db.prepare(`SELECT COALESCE(MAX(attempt),0)+1 AS attempt FROM payroll_batches
+      WHERE group_id=? AND source_order=?`).get(payload.groupId, payload.sourceOrder) as { attempt: number }).attempt);
+    const inserted = db.prepare(`INSERT INTO payroll_batches(group_id, source_order, year, fortnight, payroll_type, layout_code, layout_version,
+      original_filename, original_file_path, file_size, file_hash_sha256, lineage_batch_id, version, attempt, status, replaced_batch_id,
+      started_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PROCESSING', ?, ?, ?, ?)`).run(
+      payload.groupId, payload.sourceOrder, payload.year, payload.fortnight, payload.payrollType, UNIFORM_PAYROLL_LAYOUT.code,
+      UNIFORM_PAYROLL_LAYOUT.version, basename(payload.filePath), payload.filePath, totalBytes, fileHash,
+      identical ? (identical.lineage_batch_id ?? identical.id) : null, identical ? identical.version + 1 : 1, attempt,
+      identical?.id ?? null, now, now, now);
     batchId = Number(inserted.lastInsertRowid);
-    if (payload.duplicateAction === 'REPLACE' && previous) {
-      db.prepare(`UPDATE payroll_batches SET status = 'SUPERSEDED', updated_at = ? WHERE id = ?`).run(now, previous.id);
-    }
 
-    const conceptRules = db.prepare(`SELECT * FROM concept_rules WHERE concept_family_id = 1 AND active = 1 ORDER BY priority`).all() as ConceptRule[];
-    const exclusionRules = db.prepare(`SELECT * FROM exclusion_rules WHERE active = 1 ORDER BY priority`).all() as ExclusionRule[];
-    const evaluator = new PayrollRecordEvaluator(new ConceptRuleEngine(conceptRules), new ExclusionRuleEngine(exclusionRules),
-      payload.payrollType, payload.exclusions);
-    const parser = new TxtStreamParser();
-    let lastProgress = 0;
-    emitProgress(Stage.READING, counters, totalBytes, started, 0);
+    const rules = db.prepare(ACTIVE_CONCEPT_MATCHERS_SQL).all() as ConceptMatchRule[];
+    const concepts = db.prepare(`SELECT c.id, c.code, c.name, c.operation_factor, g.code AS group_code, g.name AS group_name
+      FROM payroll_concepts c LEFT JOIN concept_groups g ON g.id = c.group_id WHERE c.active = 1`).all() as
+      Array<{ id: number; code: string; name: string; operation_factor: number; group_code: string | null; group_name: string | null }>;
+    const saveConcept = db.prepare(`INSERT INTO batch_concept_snapshots(batch_id, source_concept_id, concept_code, concept_name,
+      group_code, group_name, operation_factor, selected, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    const saveAlias = db.prepare(`INSERT INTO batch_alias_snapshots(batch_id, source_alias_id, source_concept_id, source_description,
+      normalized_description, created_at) SELECT ?, id, concept_id, source_description, normalized_description, ?
+      FROM concept_aliases WHERE active = 1`);
+    const saveRetained = db.prepare(`INSERT INTO batch_retained_employees(batch_id, employee_number, missing_acknowledged, created_at)
+      VALUES (?, ?, ?, ?)`);
+    db.transaction(() => {
+      for (const concept of concepts) saveConcept.run(batchId, concept.id, concept.code, concept.name, concept.group_code,
+        concept.group_name, concept.operation_factor, selected.has(concept.id) ? 1 : 0, now);
+      saveAlias.run(batchId, now);
+      for (const employee of retainedSet) saveRetained.run(batchId, employee, payload.missingAcknowledged ? 1 : 0, now);
+    })();
 
-    for await (const item of parser.parse(payload.filePath, () => cancelled)) {
-      counters.total += 1;
-      bytesProcessed += Buffer.byteLength(item.rawLine, 'utf8') + 1;
-      if (!item.record) {
-        counters.invalid += 1;
-      } else {
+    const evaluator = new PayrollRecordEvaluator(new ConceptMatcher(rules), selected, retainedSet);
+    let lastProgress = 0; emitProgress(Stage.READING, counters, totalBytes, started, 0);
+    for await (const item of new TxtStreamParser().parse(payload.filePath, () => cancelled)) {
+      counters.total += 1; bytesProcessed += Buffer.byteLength(item.rawLine, 'utf8') + 1;
+      if (!item.record) counters.invalid += 1;
+      else {
         const evaluation = evaluator.evaluate(item.record);
+        if (evaluation.classification.matched) counters.matched += 1;
+        if (retainedSet.has(item.record.employeeNumber) && evaluation.classification.conceptId && selected.has(evaluation.classification.conceptId)) {
+          const stat = retainedStats.get(item.record.employeeNumber) ?? { name: item.record.employeeName, found: 0, excluded: 0 };
+          stat.name ||= item.record.employeeName; stat.found += 1;
+          if (evaluation.exclusionCategory === 'RETAINED') stat.excluded += 1; retainedStats.set(item.record.employeeNumber, stat);
+        }
         switch (evaluation.status) {
           case RecordStatus.INVALID: counters.invalid += 1; break;
           case RecordStatus.UNCLASSIFIED: counters.unclassified += 1; break;
           case RecordStatus.EXCLUDED: counters.excluded += 1; break;
           case RecordStatus.VALID: {
-            counters.valid += 1;
-            counters.matched += 1;
-            const amountCents = evaluation.amountCents ?? 0;
-            recordsTotal += amountCents;
-            const total: BatchTotalInput = {
-              conceptVariant: evaluation.classification.variant ?? null,
-              conceptCode: item.record.conceptCode,
-              conceptDescription: evaluation.classification.canonical,
-              accountCode: item.record.accountCode,
-              movementType: item.record.movementType,
-              recordCount: 1,
-              totalAmountCents: amountCents,
-            };
-            const key = JSON.stringify([total.conceptVariant, total.conceptCode, total.conceptDescription, total.accountCode, total.movementType]);
+            counters.valid += 1; const original = evaluation.amountCents ?? 0; const applied = evaluation.appliedAmountCents ?? 0;
+            recordsTotal += applied;
+            const total: BatchTotalInput = { sourceConceptId: evaluation.classification.conceptId!,
+              conceptCode: evaluation.classification.conceptCode!, conceptName: evaluation.classification.conceptName!,
+              groupCode: evaluation.classification.groupCode ?? null, groupName: evaluation.classification.groupName ?? null,
+              sourcePayrollCode: item.record.conceptCode, sourceDescription: evaluation.classification.normalized,
+              accountCode: item.record.accountCode, movementType: item.record.movementType,
+              operationFactor: evaluation.classification.operationFactor ?? 1, recordCount: 1,
+              originalAmountCents: original, totalAmountCents: applied };
+            const key = JSON.stringify([total.sourceConceptId, total.sourcePayrollCode, total.sourceDescription, total.accountCode, total.movementType]);
             const accumulated = totalsByGroup.get(key);
-            if (accumulated) {
-              accumulated.recordCount += 1;
-              accumulated.totalAmountCents += amountCents;
-            } else {
-              totalsByGroup.set(key, total);
-            }
-            break;
+            if (accumulated) { accumulated.recordCount += 1; accumulated.originalAmountCents += original; accumulated.totalAmountCents += applied; }
+            else totalsByGroup.set(key, total); break;
           }
           default: break;
         }
       }
-      if (Date.now() - lastProgress >= 250) {
-        emitProgress(Stage.CLASSIFYING, counters, totalBytes, started, bytesProcessed);
-        lastProgress = Date.now();
-      }
+      if (Date.now() - lastProgress >= 250) { emitProgress(Stage.CLASSIFYING, counters, totalBytes, started, bytesProcessed); lastProgress = Date.now(); }
     }
-
-    if (cancelled) {
-      db.prepare(`UPDATE payroll_batches SET status = 'CANCELLED', total_lines = ?, updated_at = ? WHERE id = ?`)
-        .run(counters.total, new Date().toISOString(), batchId);
-      port.postMessage({ type: 'cancelled', processId: payload.processId, batchId });
-      return;
-    }
+    if (cancelled) { db.prepare(`UPDATE payroll_batches SET status='CANCELLED', total_lines=?, updated_at=? WHERE id=?`)
+      .run(counters.total, new Date().toISOString(), batchId); port.postMessage({ type: 'cancelled', processId: payload.processId, batchId }); return; }
 
     emitProgress(Stage.CALCULATING, counters, totalBytes, started, totalBytes);
     const totals = new TotalsService(db).persist(batchId, totalsByGroup.values(), recordsTotal);
     const status = totals.difference === 0 ? BatchStatus.PROCESSING : BatchStatus.FAILED_RECONCILIATION;
-    db.prepare(`UPDATE payroll_batches SET status = ?, total_lines = ?, valid_lines = ?, excluded_lines = ?, invalid_lines = ?,
-      unclassified_lines = ?, matching_lines = ?, total_amount_cents = ?, updated_at = ? WHERE id = ?`)
-      .run(status, counters.total, counters.valid, counters.excluded, counters.invalid, counters.unclassified, counters.matched,
-        totals.recordsTotal, new Date().toISOString(), batchId);
-    port.postMessage({ type: 'processed', processId: payload.processId, batchId, counters, totalAmountCents: totals.recordsTotal,
-      difference: totals.difference, fileHash });
+    db.prepare(`UPDATE payroll_batches SET status=?, total_lines=?, valid_lines=?, excluded_lines=?, invalid_lines=?, unclassified_lines=?,
+      matching_lines=?, total_amount_cents=?, updated_at=? WHERE id=?`).run(status, counters.total, counters.valid, counters.excluded,
+      counters.invalid, counters.unclassified, counters.matched, totals.recordsTotal, new Date().toISOString(), batchId);
+    const updateRetained = db.prepare(`UPDATE batch_retained_employees SET employee_name=COALESCE(NULLIF(?,''),employee_name),
+      found_records=?, excluded_records=? WHERE batch_id=? AND employee_number=?`);
+    for (const [employee, stat] of retainedStats) updateRetained.run(stat.name, stat.found, stat.excluded, batchId, employee);
+    port.postMessage({ type: 'processed', processId: payload.processId, batchId, counters, totalAmountCents: totals.recordsTotal, difference: totals.difference, fileHash });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'No se pudo procesar el archivo.';
-    if (batchId !== null) {
-      db.prepare(`UPDATE payroll_batches SET status = 'FAILED', updated_at = ? WHERE id = ?`).run(new Date().toISOString(), batchId);
-    }
+    if (batchId !== null) db.prepare(`UPDATE payroll_batches SET status='FAILED', updated_at=? WHERE id=?`).run(new Date().toISOString(), batchId);
     port.postMessage({ type: 'error', processId: payload.processId, batchId, message });
-  } finally {
-    databaseService.close();
-    port.close();
-  }
+  } finally { service.close(); port.close(); }
 }
 
 void run();

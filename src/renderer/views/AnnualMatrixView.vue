@@ -13,13 +13,8 @@ const consulted = ref(false);
 const error = ref('');
 const batches = ref<BatchSummary[]>([]);
 const rows = computed(() => {
-  const latest = new Map<string, BatchSummary>();
-  for (const batch of batches.value) {
-    const key = `${batch.fortnight}:${batch.payrollType}`;
-    if (!latest.has(key)) latest.set(key, batch);
-  }
   const byFortnight = new Map<number, { total: number; payrollTypes: Set<string>; batches: number }>();
-  for (const batch of latest.values()) {
+  for (const batch of batches.value) {
     const row = byFortnight.get(batch.fortnight) ?? { total: 0, payrollTypes: new Set<string>(), batches: 0 };
     row.total += batch.totalAmountCents;
     row.payrollTypes.add(batch.payrollType);
@@ -54,10 +49,10 @@ async function consult(): Promise<void> {
 </script>
 
 <template>
-  <PageHeader title="Matriz anual de ISR" description="Compara las 24 quincenas por tipo de nómina y total anual." />
+  <PageHeader title="Matriz anual" description="Compara el total general de las 24 quincenas por tipo de nómina." />
   <div v-if="error" class="alert alert-danger" role="alert"><strong>No se pudo completar la consulta.</strong><div>{{ error }}</div></div>
-  <form class="period-toolbar" @submit.prevent="consult"><div><label class="form-label" for="matrix-year">Año</label><input id="matrix-year" v-model.number="year" class="form-control" type="number" min="2000" max="2200" /></div><div><label class="form-label" for="matrix-concept">Concepto</label><select id="matrix-concept" class="form-select"><option>ISR</option></select></div><button class="btn btn-primary align-self-end" type="submit" :disabled="loading"><span v-if="loading" class="spinner-border spinner-border-sm" aria-hidden="true" /><i v-else class="bi bi-search" aria-hidden="true" /> {{ loading ? 'Consultando…' : 'Consultar' }}</button></form>
+  <form class="period-toolbar" @submit.prevent="consult"><div><label class="form-label" for="matrix-year">Año</label><input id="matrix-year" v-model.number="year" class="form-control" type="number" min="2000" max="2200" /></div><button class="btn btn-primary align-self-end" type="submit" :disabled="loading"><span v-if="loading" class="spinner-border spinner-border-sm" aria-hidden="true" /><i v-else class="bi bi-search" aria-hidden="true" /> {{ loading ? 'Consultando…' : 'Consultar' }}</button></form>
   <EmptyState v-if="!consulted" title="Selecciona un año" description="Consulta los lotes completados para obtener los totales por quincena." icon="bi-calendar3" />
   <EmptyState v-else-if="!rows.length" title="No hay datos para mostrar" description="No se encontraron lotes completados para el año seleccionado." icon="bi-inbox" />
-  <div v-else class="table-responsive table-frame"><table class="table align-middle mb-0"><caption class="visually-hidden">Totales anuales de ISR por quincena</caption><thead><tr><th>Quincena</th><th class="text-end">Tipos de nómina</th><th class="text-end">Lotes incluidos</th><th class="text-end">Total ISR</th></tr></thead><tbody><tr v-for="row in rows" :key="row.fortnight"><td>Quincena {{ String(row.fortnight).padStart(2, '0') }}</td><td class="text-end">{{ row.payrollTypes }}</td><td class="text-end">{{ row.batches }}</td><td class="text-end"><MoneyValue :cents="row.total" /></td></tr></tbody><tfoot><tr><th colspan="3">Total anual</th><th class="text-end"><MoneyValue :cents="annualTotal" /></th></tr></tfoot></table></div>
+  <div v-else class="table-responsive table-frame"><table class="table align-middle mb-0"><caption class="visually-hidden">Totales generales anuales por quincena</caption><thead><tr><th>Quincena</th><th class="text-end">Tipos de nómina</th><th class="text-end">Lotes incluidos</th><th class="text-end">Total general</th></tr></thead><tbody><tr v-for="row in rows" :key="row.fortnight"><td>Quincena {{ String(row.fortnight).padStart(2, '0') }}</td><td class="text-end">{{ row.payrollTypes }}</td><td class="text-end">{{ row.batches }}</td><td class="text-end"><MoneyValue :cents="row.total" /></td></tr></tbody><tfoot><tr><th colspan="3">Total anual</th><th class="text-end"><MoneyValue :cents="annualTotal" /></th></tr></tfoot></table></div>
 </template>

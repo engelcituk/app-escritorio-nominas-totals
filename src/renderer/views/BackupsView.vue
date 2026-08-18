@@ -37,7 +37,7 @@ async function restore(): Promise<void> {
 </script>
 
 <template>
-  <PageHeader title="Respaldos" description="Protege la base local, la configuración y las reglas de la aplicación." />
+  <PageHeader title="Respaldos" description="Protege la base local, la configuración y el catálogo de conceptos." />
   <div v-if="error" class="alert alert-danger" role="alert"><strong>No se pudo completar la operación.</strong><div>{{ error }}</div></div>
   <section class="backup-panel">
     <i class="bi bi-shield-check" aria-hidden="true" />

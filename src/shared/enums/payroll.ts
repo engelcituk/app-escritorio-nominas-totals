@@ -19,6 +19,7 @@ export enum BatchStatus {
   FAILED_RECONCILIATION = 'FAILED_RECONCILIATION',
   COMPLETED = 'COMPLETED',
   SUPERSEDED = 'SUPERSEDED',
+  PARTIAL = 'PARTIAL',
 }
 
 export enum ProcessingStage {
@@ -39,11 +40,4 @@ export enum RecordStatus {
   INVALID = 'INVALID',
   UNCLASSIFIED = 'UNCLASSIFIED',
   DUPLICATE = 'DUPLICATE',
-}
-
-export enum ExclusionCategory {
-  RETAINED = 'RETAINED',
-  CANCELLED = 'CANCELLED',
-  INVALIDATED = 'INVALIDATED',
-  OTHER = 'OTHER',
 }

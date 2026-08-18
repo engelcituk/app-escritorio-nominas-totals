@@ -2,3 +2,14 @@
 .step-section.is-disabled { background: #fafafa; }.step-header { display: flex; align-items: flex-start; gap: 0.85rem; padding: 1rem 1.25rem; border-bottom: 1px solid #e6e9ee; }
 .step-header h2 { margin: 0; }.step-header p { margin: 0.25rem 0 0; }.step-number { display: grid; width: 28px; height: 28px; flex: 0 0 28px; place-items: center; border-radius: 50%; background: #5e1128; color: #fff; font-weight: 700; }
 .step-status { margin-left: auto; }.step-body { min-width: 0; padding: 1.25rem; }
+
+.catalog-layout { display: grid; grid-template-columns: minmax(260px, 0.8fr) minmax(0, 2fr); gap: 1rem; align-items: start; }
+.catalog-list, .catalog-editor { border: 1px solid #d8dde5; border-radius: 0.35rem; background: #fff; }
+.catalog-list > header, .catalog-editor { padding: 1rem; }
+.catalog-list > header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #d8dde5; background: #f7f8fa; }
+.catalog-list h2, .catalog-editor h2 { margin: 0.1rem 0 0; font-size: 1rem; }
+.catalog-item { display: flex; width: 100%; justify-content: space-between; gap: 0.75rem; padding: 0.8rem 1rem; border: 0; border-bottom: 1px solid #eaecf0; background: #fff; color: #18212f; text-align: left; cursor: pointer; }
+.catalog-item span { display: grid; gap: 0.15rem; }.catalog-item small { color: #667085; }.catalog-item.is-active { box-shadow: inset 4px 0 #5e1128; background: #fbf7f8; }
+.rule-list { display: grid; gap: 0.5rem; margin: 0.8rem 0 1rem; }.rule-list article { display: flex; justify-content: space-between; gap: 1rem; align-items: center; padding: 0.75rem; border: 1px solid #d8dde5; }
+.rule-list article > div:first-child { display: grid; gap: 0.2rem; }.rule-list small { color: #667085; }.rule-form { margin-top: 1rem; padding: 1rem; border: 1px solid #d8dde5; background: #f9fafb; }
+@media (max-width: 900px) { .catalog-layout { grid-template-columns: 1fr; } }

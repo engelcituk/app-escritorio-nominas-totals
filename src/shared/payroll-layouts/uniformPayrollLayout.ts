@@ -22,6 +22,31 @@ export const UNIFORM_PAYROLL_LAYOUT = {
   },
 } as const;
 
+export const UNIFORM_PAYROLL_COLUMNS = [
+  { header: 'Dependencia - segmento 1', width: 22 },
+  { header: 'Dependencia - segmento 2', width: 22 },
+  { header: 'Dependencia - segmento 3', width: 22 },
+  { header: 'Dependencia - segmento 4', width: 22 },
+  { header: 'Número de empleado', width: 20 },
+  { header: 'Clave de puesto', width: 22 },
+  { header: 'Código de nivel', width: 18 },
+  { header: 'Código de adscripción', width: 22 },
+  { header: 'Clave de plaza', width: 22 },
+  { header: 'Dato de plaza 1', width: 18 },
+  { header: 'Dato de plaza 2', width: 18 },
+  { header: 'Nombre del empleado', width: 38 },
+  { header: 'Nombre del puesto', width: 36 },
+  { header: 'Código tabular', width: 18 },
+  { header: 'Tipo de movimiento', width: 20 },
+  { header: 'Clasificador de movimiento', width: 27 },
+  { header: 'Código de concepto', width: 20 },
+  { header: 'Descripción del concepto', width: 38 },
+  { header: 'Importe', width: 18 },
+  { header: 'Cuenta contable', width: 32 },
+  { header: 'Fuente de financiamiento', width: 25 },
+  { header: 'Centro de pago', width: 18 },
+] as const;
+
 export type UniformField = keyof typeof UNIFORM_PAYROLL_LAYOUT.fields;
 
 export function mapUniformColumns(columns: readonly string[]): Omit<ParsedPayrollRecord, 'lineNumber'> {
