@@ -9,6 +9,7 @@ export const UNIFORM_PAYROLL_LAYOUT = {
   fields: {
     dependencyKeyParts: [0, 1, 2, 3],
     employeeNumber: 4,
+    sourceKey: 8,
     employeeName: 11,
     positionName: 12,
     movementType: 14,
@@ -31,7 +32,7 @@ export const UNIFORM_PAYROLL_COLUMNS = [
   { header: 'Clave de puesto', width: 22 },
   { header: 'Código de nivel', width: 18 },
   { header: 'Código de adscripción', width: 22 },
-  { header: 'Clave de plaza', width: 22 },
+  { header: 'Fuente', width: 22 },
   { header: 'Dato de plaza 1', width: 18 },
   { header: 'Dato de plaza 2', width: 18 },
   { header: 'Nombre del empleado', width: 38 },
@@ -55,6 +56,7 @@ export function mapUniformColumns(columns: readonly string[]): Omit<ParsedPayrol
   const dependencyKey = `${dependencyParts[0]}${dependencyParts[1]}${dependencyParts[2]}-${dependencyParts[3]}`;
   return {
     dependencyKey,
+    sourceKey: columns[f.sourceKey]?.trim() ?? '',
     employeeNumber: columns[f.employeeNumber]?.trim() ?? '',
     employeeName: columns[f.employeeName]?.trim() ?? '',
     positionName: columns[f.positionName]?.trim() ?? '',

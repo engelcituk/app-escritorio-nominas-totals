@@ -1,64 +1,14 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
-import PageHeader from '../components/PageHeader.vue';
-import { errorMessage } from '../utils/errorMessage';
-
-const directory = ref('');
-const token = ref('');
-const saved = ref(false);
-const loading = ref(true);
-const choosing = ref(false);
-const saving = ref(false);
-const error = ref('');
-
-onMounted(async () => {
-  try {
-    directory.value = (await window.sefiplanApi.getSettings()).reports_directory ?? '';
-  } catch (cause) {
-    error.value = errorMessage(cause, 'No se pudo cargar la configuración.');
-  } finally {
-    loading.value = false;
-  }
-});
-
-async function choose(): Promise<void> {
-  error.value = '';
-  choosing.value = true;
-  try {
-    const selected = await window.sefiplanApi.selectExportDirectory();
-    if (selected) {
-      directory.value = selected.name;
-      token.value = selected.token;
-      saved.value = false;
-    }
-  } catch (cause) {
-    error.value = errorMessage(cause, 'No se pudo seleccionar la carpeta.');
-  } finally {
-    choosing.value = false;
-  }
-}
-
-async function save(): Promise<void> {
-  if (!token.value || saving.value) return;
-  error.value = '';
-  saving.value = true;
-  try {
-    await window.sefiplanApi.updateSettings({ reports_directory_token: token.value });
-    saved.value = true;
-    token.value = '';
-  } catch (cause) {
-    error.value = errorMessage(cause, 'No se pudo guardar la configuración.');
-  } finally {
-    saving.value = false;
-  }
-}
+import { onMounted,reactive,ref } from 'vue';import type { PayrollTypeSummary } from '@shared/types/payroll';import PageHeader from '../components/PageHeader.vue';import { errorMessage } from '../utils/errorMessage';
+const directory=ref('');const token=ref('');const saved=ref(false);const loading=ref(true);const choosing=ref(false);const saving=ref(false);const error=ref('');const types=ref<PayrollTypeSummary[]>([]);
+const draft=reactive({id:undefined as number|undefined,code:'',name:'',active:true});
+onMounted(load);async function load():Promise<void>{try{const [settings,items]=await Promise.all([window.sefiplanApi.getSettings(),window.sefiplanApi.getPayrollTypes(true)]);directory.value=settings.reports_directory??'';types.value=items;}catch(cause){error.value=errorMessage(cause,'No se pudo cargar la configuración.');}finally{loading.value=false;}}
+async function choose():Promise<void>{choosing.value=true;try{const selected=await window.sefiplanApi.selectExportDirectory();if(selected){directory.value=selected.name;token.value=selected.token;saved.value=false;}}catch(cause){error.value=errorMessage(cause,'No se pudo seleccionar la carpeta.');}finally{choosing.value=false;}}
+async function saveDirectory():Promise<void>{if(!token.value)return;saving.value=true;try{await window.sefiplanApi.updateSettings({reports_directory_token:token.value});saved.value=true;token.value='';}catch(cause){error.value=errorMessage(cause,'No se pudo guardar la configuración.');}finally{saving.value=false;}}
+function editType(type:PayrollTypeSummary):void{Object.assign(draft,{id:type.id,code:type.code,name:type.name,active:type.active});}function clearType():void{Object.assign(draft,{id:undefined,code:'',name:'',active:true});}
+async function saveType():Promise<void>{saving.value=true;error.value='';try{await window.sefiplanApi.savePayrollType({...(draft.id?{id:draft.id}:{}),code:draft.code,name:draft.name,active:draft.active});clearType();types.value=await window.sefiplanApi.getPayrollTypes(true);}catch(cause){error.value=errorMessage(cause,'No se pudo guardar el tipo de nómina.');}finally{saving.value=false;}}
 </script>
-
-<template>
-  <PageHeader title="Configuración" description="Define preferencias locales de reportes y periodos." />
-  <div v-if="error" class="alert alert-danger" role="alert"><strong>No se pudo completar la operación.</strong><div>{{ error }}</div></div>
-  <form class="settings-panel" @submit.prevent="save">
-    <div><label class="form-label" for="reports-dir">Carpeta raíz de reportes</label><div class="input-group"><input id="reports-dir" :value="directory" class="form-control" type="text" readonly placeholder="Documentos\SEFIPLAN_Nomina" /><button class="btn btn-outline-primary" type="button" :disabled="loading || choosing || saving" @click="choose"><span v-if="choosing" class="spinner-border spinner-border-sm" aria-hidden="true" />{{ choosing ? 'Abriendo…' : 'Seleccionar' }}</button></div><div class="form-text">Los reportes se organizan automáticamente por año y quincena; por ejemplo: <span class="text-nowrap">2026\Q11</span>.</div></div>
-    <div class="d-flex align-items-center gap-3 flex-wrap"><button class="btn btn-primary" type="submit" :disabled="!token || saving"><span v-if="saving" class="spinner-border spinner-border-sm" aria-hidden="true" />{{ saving ? 'Guardando…' : 'Guardar configuración' }}</button><span v-if="saved" class="text-success" role="status"><i class="bi bi-check-circle" aria-hidden="true" /> Configuración guardada</span></div>
-  </form>
-</template>
+<template><PageHeader title="Configuración" description="Define la carpeta de reportes y administra los tipos de nómina." /><div v-if="error" class="alert alert-danger" role="alert">{{ error }}</div>
+  <section class="settings-panel"><div><h2>Carpeta de reportes</h2><label class="form-label" for="reports-dir">Carpeta raíz</label><div class="input-group"><input id="reports-dir" :value="directory" class="form-control" readonly placeholder="Documentos\SEFIPLAN_Nomina" /><button class="btn btn-outline-primary" type="button" :disabled="loading||choosing||saving" @click="choose">{{ choosing?'Abriendo…':'Seleccionar' }}</button></div><div class="form-text">Se organizará como 2026\M07\ISR.</div></div><div><button class="btn btn-primary" type="button" :disabled="!token||saving" @click="saveDirectory">Guardar carpeta</button><span v-if="saved" class="text-success ms-3" role="status"><i class="bi bi-check-circle" /> Guardada</span></div></section>
+  <section class="payroll-type-settings mt-4" aria-labelledby="types-title"><header><div><span class="eyebrow">Catálogo operativo</span><h2 id="types-title">Tipos de nómina</h2><p>Conserva separadas variantes como Honorarios FASP o Pagos diversos.</p></div><button class="btn btn-outline-secondary btn-sm" type="button" @click="clearType">Nuevo tipo</button></header><div class="payroll-type-settings__body"><div class="table-responsive"><table class="table align-middle mb-0"><thead><tr><th>Código</th><th>Nombre</th><th>Estado</th><th>Uso</th><th></th></tr></thead><tbody><tr v-for="type in types" :key="type.id"><td><code>{{ type.code }}</code></td><td>{{ type.name }}</td><td>{{ type.active?'Activo':'Inactivo' }}</td><td>{{ type.used?'Utilizado':'Sin uso' }}</td><td class="text-end"><button class="btn btn-outline-secondary btn-sm" type="button" @click="editType(type)">Editar</button></td></tr></tbody></table></div>
+    <form class="payroll-type-form" @submit.prevent="saveType"><h3>{{ draft.id?'Editar tipo':'Nuevo tipo' }}</h3><label class="form-label">Código<input v-model.trim="draft.code" class="form-control" pattern="[A-Z0-9_]+" required :readonly="Boolean(draft.id&&types.find(t=>t.id===draft.id)?.used)" /></label><label class="form-label">Nombre<input v-model.trim="draft.name" class="form-control" required /></label><label class="form-check"><input v-model="draft.active" class="form-check-input" type="checkbox" /> Activo</label><button class="btn btn-primary" :disabled="saving">Guardar tipo</button></form></div></section></template>

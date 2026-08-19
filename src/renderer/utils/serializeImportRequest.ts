@@ -1,18 +1,18 @@
-import type { ProcessImportGroupRequest } from '../../shared/types/payroll.js';
+import type { ProcessMonthlyImportRequest } from '../../shared/types/payroll.js';
 
-export function serializeImportRequest(request: ProcessImportGroupRequest): ProcessImportGroupRequest {
+export function serializeImportRequest(request: ProcessMonthlyImportRequest): ProcessMonthlyImportRequest {
   return {
-    year: request.year,
+    year: request.year, month: request.month, conceptGroupId: request.conceptGroupId,
     files: request.files.map((file) => ({
       fileToken: file.fileToken,
       fortnight: file.fortnight,
-      payrollType: file.payrollType,
+      payrollTypeId: file.payrollTypeId,
       selectedConceptIds: [...file.selectedConceptIds],
       retainedEmployeeNumbers: [...file.retainedEmployeeNumbers],
       missingAcknowledged: file.missingAcknowledged,
-      ...(file.duplicateDecision ? { duplicateDecision: file.duplicateDecision } : {}),
+      replaceActiveBatch: file.replaceActiveBatch,
     })),
     ...(request.exportDirectoryToken ? { exportDirectoryToken: request.exportDirectoryToken } : {}),
-    ...(request.replacedGroupId ? { replacedGroupId: request.replacedGroupId } : {}),
+    ...(request.reconciliationId ? { reconciliationId: request.reconciliationId } : {}),
   };
 }

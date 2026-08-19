@@ -6,10 +6,11 @@ export function installPreviewApi(): void {
   const desktopOnly = async (): Promise<never> => { throw new Error('Esta operación solo está disponible dentro de la aplicación de escritorio.'); };
   const api: SefiplanApi = {
     selectTxtFiles: async () => [], inspectTxtFile: desktopOnly, selectExportDirectory: async () => null,
-    processImportGroup: desktopOnly, resumeImportGroup: desktopOnly, validateRetainedEmployees: async () => ({ matches: [], missingCount: 0 }),
+    processMonthlyImport: desktopOnly, validateRetainedEmployees: async () => ({ matches: [], missingCount: 0 }),
     cancelProcessing: async () => false, subscribeToProgress: () => () => undefined, subscribeToCompletion: () => () => undefined,
-    getBatchHistory: async () => ({ items: [], total: 0 }), getImportGroupHistory: async () => ({ items: [], total: 0 }),
-    openReportFolder: async () => false, openGroupReportFolder: async () => false,
+    getBatchHistory: async () => ({ items: [], total: 0 }), getMonthlyHistory: async () => ({ items: [], total: 0 }),
+    getOrCreateMonthlyReconciliation: desktopOnly, openReportFolder: async () => false, openMonthlyReportFolder: async () => false,
+    getPayrollTypes: async () => [], savePayrollType: async () => 0,
     getConceptCatalog: async () => ({ groups: [], concepts: [] }), saveConceptGroup: async () => 0, savePayrollConcept: async () => 0,
     addConceptAlias: async () => 0, removeConceptAlias: async () => undefined,
     createBackup: async () => null, restoreBackup: async () => null, getSettings: async () => ({}), updateSettings: async () => undefined,

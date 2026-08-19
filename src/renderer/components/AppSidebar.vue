@@ -3,8 +3,8 @@ defineProps<{ collapsed: boolean }>();
 defineEmits<{ toggle: [] }>();
 
 const entries = [
-  ['/', 'bi-house-door', 'Inicio'], ['/importar', 'bi-file-earmark-arrow-up', 'Nueva importación'],
-  ['/historico', 'bi-clock-history', 'Histórico'], ['/consolidado', 'bi-table', 'Consolidado'],
+  ['/', 'bi-house-door', 'Inicio'], ['/importar', 'bi-calendar2-check', 'Expedientes mensuales'],
+  ['/historico', 'bi-clock-history', 'Histórico mensual'], ['/consolidado', 'bi-table', 'Consolidado mensual'],
   ['/matriz-anual', 'bi-calendar3', 'Matriz anual'], ['/catalogo-conceptos', 'bi-journal-check', 'Catálogo de conceptos'],
   ['/documentacion', 'bi-book', 'Documentación'], ['/configuracion', 'bi-gear', 'Configuración'],
   ['/respaldos', 'bi-shield-check', 'Respaldos'],

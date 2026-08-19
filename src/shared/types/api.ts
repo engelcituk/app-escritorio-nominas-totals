@@ -1,23 +1,26 @@
 import type { HistoryQuery } from '../schemas/ipc.js';
-import type { BatchSummary, ConceptAliasDraft, ConceptGroup, ConceptGroupDraft, ImportGroupSummary, PayrollConcept,
-  PayrollConceptDraft, PreflightResult, ProcessImportGroupRequest, ProcessingProgress, ProcessResult,
+import type { BatchSummary, ConceptAliasDraft, ConceptGroup, ConceptGroupDraft, MonthlyReconciliationResult,
+  MonthlyReconciliationSummary, PayrollConcept, PayrollConceptDraft, PayrollTypeDraft, PayrollTypeSummary,
+  PreflightResult, ProcessMonthlyImportRequest, ProcessingProgress,
   RetainedValidationResult, SelectedFile } from './payroll.js';
 
 export interface SefiplanApi {
   selectTxtFiles(): Promise<SelectedFile[]>;
   inspectTxtFile(payload: { fileToken: string; includePreview: boolean }): Promise<PreflightResult>;
   selectExportDirectory(): Promise<{ token: string; name: string } | null>;
-  processImportGroup(payload: ProcessImportGroupRequest): Promise<{ processId: string }>;
-  resumeImportGroup(groupId: number): Promise<{ processId: string }>;
-  validateRetainedEmployees(payload: { files: Array<Pick<ProcessImportGroupRequest['files'][number],
-    'fileToken' | 'payrollType' | 'selectedConceptIds' | 'retainedEmployeeNumbers'>> }): Promise<RetainedValidationResult>;
+  processMonthlyImport(payload: ProcessMonthlyImportRequest): Promise<{ processId: string }>;
+  validateRetainedEmployees(payload: { files: Array<Pick<ProcessMonthlyImportRequest['files'][number],
+    'fileToken' | 'payrollTypeId' | 'selectedConceptIds' | 'retainedEmployeeNumbers'>> }): Promise<RetainedValidationResult>;
   cancelProcessing(processId: string): Promise<boolean>;
   subscribeToProgress(callback: (progress: ProcessingProgress) => void): () => void;
-  subscribeToCompletion(callback: (result: ProcessResult) => void): () => void;
+  subscribeToCompletion(callback: (result: MonthlyReconciliationResult) => void): () => void;
   getBatchHistory(filters: HistoryQuery): Promise<{ items: BatchSummary[]; total: number }>;
-  getImportGroupHistory(filters: HistoryQuery): Promise<{ items: ImportGroupSummary[]; total: number }>;
+  getMonthlyHistory(filters: HistoryQuery): Promise<{ items: MonthlyReconciliationSummary[]; total: number }>;
+  getOrCreateMonthlyReconciliation(payload: { year: number; month: number; conceptGroupId: number }): Promise<MonthlyReconciliationSummary>;
   openReportFolder(batchId: number): Promise<boolean>;
-  openGroupReportFolder(groupId: number): Promise<boolean>;
+  openMonthlyReportFolder(reconciliationId: number): Promise<boolean>;
+  getPayrollTypes(includeInactive?: boolean): Promise<PayrollTypeSummary[]>;
+  savePayrollType(payload: PayrollTypeDraft): Promise<number>;
   getConceptCatalog(): Promise<{ groups: ConceptGroup[]; concepts: PayrollConcept[] }>;
   saveConceptGroup(payload: ConceptGroupDraft): Promise<number>;
   savePayrollConcept(payload: PayrollConceptDraft): Promise<number>;

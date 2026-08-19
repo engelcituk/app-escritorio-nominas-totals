@@ -3,6 +3,7 @@ import { extname } from 'node:path';
 import { UNIFORM_PAYROLL_LAYOUT } from '../../shared/payroll-layouts/uniformPayrollLayout.js';
 import type { DetectedConcept, PreflightResult, PreviewRecord, SelectedFile } from '../../shared/types/payroll.js';
 import { parseAmountToCents } from '../../shared/utils/money.js';
+import { parsePayrollFilename } from '../../shared/utils/payrollPeriod.js';
 import { ConceptMatcher, type ConceptMatchRule } from './ConceptMatcher.js';
 import { calculateFileSha256 } from './FileHashService.js';
 import { TxtStreamParser } from './TxtStreamParser.js';
@@ -64,8 +65,10 @@ export async function inspectPayrollFile(filePath: string, selected: SelectedFil
       name: item.rule.conceptName, groupId: item.rule.groupId, groupName: item.rule.groupName, operationFactor: item.rule.operationFactor === -1 ? -1 as const : 1 as const,
       active: true } : null })).sort((a, b) => a.sourceDescription.localeCompare(b.sourceDescription, 'es'));
 
+  const filename = parsePayrollFilename(selected.name);
   return { file: selected, fileHashSha256, historicalDuplicateBatchId, delimiter: '|', columnCount: dominantColumns,
     layoutCode: UNIFORM_PAYROLL_LAYOUT.code, layoutVersion: UNIFORM_PAYROLL_LAYOUT.version, encoding: 'UTF-8', totalLines,
     sampleSize: preview.length, validPercentage, canProcess: errors.length === 0 && validPercentage >= 95,
-    preview, detectedConcepts, errors, warnings };
+    preview, detectedConcepts, errors, warnings, suggestedYear: filename?.year ?? null,
+    suggestedFortnight: filename?.fortnight ?? null, suggestedPayrollTypeCode: filename?.payrollTypeCode ?? null };
 }

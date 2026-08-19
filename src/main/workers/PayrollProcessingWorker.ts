@@ -1,7 +1,7 @@
 import { statSync } from 'node:fs';
 import { basename } from 'node:path';
 import { parentPort, workerData } from 'node:worker_threads';
-import type { PayrollType, ProcessingStage } from '../../shared/enums/payroll.js';
+import type { ProcessingStage } from '../../shared/enums/payroll.js';
 import { BatchStatus, ProcessingStage as Stage, RecordStatus } from '../../shared/enums/payroll.js';
 import { UNIFORM_PAYROLL_LAYOUT } from '../../shared/payroll-layouts/uniformPayrollLayout.js';
 import type { ProcessingProgress } from '../../shared/types/payroll.js';
@@ -13,9 +13,9 @@ import { TotalsService, type BatchTotalInput } from '../services/TotalsService.j
 import { TxtStreamParser } from '../services/TxtStreamParser.js';
 
 interface WorkerPayload {
-  processId: string; groupId: number; sourceOrder: number; databasePath: string; filePath: string; year: number;
-  fortnight: number; payrollType: PayrollType; selectedConceptIds: number[]; retainedEmployeeNumbers: string[];
-  missingAcknowledged: boolean; duplicateDecision?: 'REPROCESS';
+  processId: string; reconciliationId: number; sourceOrder: number; databasePath: string; filePath: string; year: number; month: number;
+  fortnight: number; payrollTypeId: number; selectedConceptIds: number[]; retainedEmployeeNumbers: string[];
+  missingAcknowledged: boolean; replaceActiveBatch: boolean;
 }
 interface Counters { total: number; valid: number; excluded: number; invalid: number; unclassified: number; matched: number }
 
@@ -44,23 +44,20 @@ async function run(): Promise<void> {
   try {
     emitProgress(Stage.VALIDATING, counters, totalBytes, started, 0);
     const fileHash = await calculateFileSha256(payload.filePath);
-    if (db.prepare(`SELECT id FROM payroll_batches WHERE group_id = ? AND file_hash_sha256 = ?
-      AND status NOT IN ('FAILED','CANCELLED')`).get(payload.groupId, fileHash)) throw new Error('DUPLICATE_IN_GROUP');
-    const identical = db.prepare(`SELECT id, lineage_batch_id, version FROM payroll_batches WHERE file_hash_sha256 = ?
-      AND status NOT IN ('FAILED','CANCELLED','SUPERSEDED') ORDER BY id DESC LIMIT 1`).get(fileHash) as
-      { id: number; lineage_batch_id: number | null; version: number } | undefined;
-    if (identical && payload.duplicateDecision !== 'REPROCESS') throw new Error(`DUPLICATE_FILE:${identical.id}`);
+    if (db.prepare(`SELECT id FROM payroll_batches WHERE reconciliation_id=? AND file_hash_sha256=? AND is_active=1`)
+      .get(payload.reconciliationId, fileHash)) throw new Error('DUPLICATE_ACTIVE');
+    const current = db.prepare(`SELECT id,version FROM payroll_batches WHERE reconciliation_id=? AND fortnight=?
+      AND payroll_type_id=? AND is_active=1`).get(payload.reconciliationId, payload.fortnight, payload.payrollTypeId) as
+      { id: number; version: number } | undefined;
+    if (current && !payload.replaceActiveBatch) throw new Error(`REPLACEMENT_REQUIRED:${current.id}`);
 
     const now = new Date().toISOString();
-    const attempt = Number((db.prepare(`SELECT COALESCE(MAX(attempt),0)+1 AS attempt FROM payroll_batches
-      WHERE group_id=? AND source_order=?`).get(payload.groupId, payload.sourceOrder) as { attempt: number }).attempt);
-    const inserted = db.prepare(`INSERT INTO payroll_batches(group_id, source_order, year, fortnight, payroll_type, layout_code, layout_version,
-      original_filename, original_file_path, file_size, file_hash_sha256, lineage_batch_id, version, attempt, status, replaced_batch_id,
-      started_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PROCESSING', ?, ?, ?, ?)`).run(
-      payload.groupId, payload.sourceOrder, payload.year, payload.fortnight, payload.payrollType, UNIFORM_PAYROLL_LAYOUT.code,
-      UNIFORM_PAYROLL_LAYOUT.version, basename(payload.filePath), payload.filePath, totalBytes, fileHash,
-      identical ? (identical.lineage_batch_id ?? identical.id) : null, identical ? identical.version + 1 : 1, attempt,
-      identical?.id ?? null, now, now, now);
+    const inserted = db.prepare(`INSERT INTO payroll_batches(reconciliation_id,source_order,year,month,fortnight,payroll_type_id,
+      layout_code,layout_version,original_filename,original_file_path,file_size,file_hash_sha256,version,status,is_active,replaced_batch_id,
+      started_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'PROCESSING',0,?,?,?,?)`).run(
+      payload.reconciliationId, payload.sourceOrder, payload.year, payload.month, payload.fortnight, payload.payrollTypeId,
+      UNIFORM_PAYROLL_LAYOUT.code, UNIFORM_PAYROLL_LAYOUT.version, basename(payload.filePath), payload.filePath, totalBytes, fileHash,
+      current ? current.version + 1 : 1, current?.id ?? null, now, now, now);
     batchId = Number(inserted.lastInsertRowid);
 
     const rules = db.prepare(ACTIVE_CONCEPT_MATCHERS_SQL).all() as ConceptMatchRule[];
@@ -104,11 +101,11 @@ async function run(): Promise<void> {
             const total: BatchTotalInput = { sourceConceptId: evaluation.classification.conceptId!,
               conceptCode: evaluation.classification.conceptCode!, conceptName: evaluation.classification.conceptName!,
               groupCode: evaluation.classification.groupCode ?? null, groupName: evaluation.classification.groupName ?? null,
-              sourcePayrollCode: item.record.conceptCode, sourceDescription: evaluation.classification.normalized,
+              sourcePayrollCode: item.record.conceptCode, sourceDescription: evaluation.classification.normalized, sourceKey: item.record.sourceKey,
               accountCode: item.record.accountCode, movementType: item.record.movementType,
               operationFactor: evaluation.classification.operationFactor ?? 1, recordCount: 1,
               originalAmountCents: original, totalAmountCents: applied };
-            const key = JSON.stringify([total.sourceConceptId, total.sourcePayrollCode, total.sourceDescription, total.accountCode, total.movementType]);
+            const key = JSON.stringify([total.sourceConceptId,total.sourcePayrollCode,total.sourceDescription,total.sourceKey,total.accountCode,total.movementType]);
             const accumulated = totalsByGroup.get(key);
             if (accumulated) { accumulated.recordCount += 1; accumulated.originalAmountCents += original; accumulated.totalAmountCents += applied; }
             else totalsByGroup.set(key, total); break;

@@ -15,7 +15,7 @@ export default createRouter({
   },
   routes: [
     { path: '/', name: 'home', component: HomeView, meta: { title: 'Inicio' } },
-    { path: '/importar', name: 'import', component: ImportView, meta: { title: 'Nueva importación' } },
+    { path: '/importar', name: 'import', component: ImportView, meta: { title: 'Expedientes mensuales' } },
     { path: '/historico', name: 'history', component: () => import('../views/HistoryView.vue'), meta: { title: 'Histórico' } },
     { path: '/consolidado', name: 'consolidated', component: () => import('../views/ConsolidatedView.vue'), meta: { title: 'Consolidado' } },
     { path: '/matriz-anual', name: 'annual', component: () => import('../views/AnnualMatrixView.vue'), meta: { title: 'Matriz anual' } },

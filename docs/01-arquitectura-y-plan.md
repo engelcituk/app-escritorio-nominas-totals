@@ -1,129 +1,73 @@
-# SEFIPLAN Nómina — arquitectura y plan del MVP
+# SEFIPLAN Nómina — arquitectura mensual del MVP
 
 ## 1. Arquitectura técnica
 
-La aplicación se divide en cuatro fronteras estrictas:
+La aplicación conserva cuatro fronteras:
 
-1. **Renderer (Vue 3)**: presentación, formularios y estado de sesión. No conoce rutas ni APIs de Node.
-2. **Preload**: contrato mínimo, tipado y explícito expuesto como `window.sefiplanApi`.
-3. **Main (Electron)**: diálogos nativos, validación Zod, consultas paginadas, reportes, respaldos y coordinación del worker.
-4. **Worker thread**: lectura por stream, clasificación, exclusión, escritura SQLite por lotes y cálculo determinista.
+1. **Renderer (Vue 3 + Bootstrap 5 + SCSS)**: expediente mensual, matriz operativa, catálogos y estados de interacción.
+2. **Preload**: contrato mínimo y tipado expuesto como `window.sefiplanApi`.
+3. **Main (Electron)**: validación Zod, SQLite, coordinación, rutas y generación de Excel.
+4. **Worker thread**: lectura por stream, clasificación, retenidos y cálculo determinista en centavos.
 
-SQLite vive en `app.getPath('userData')`. Los TXT nunca se cargan completos en memoria; el Renderer recibe una muestra o páginas acotadas. Los importes se almacenan como centavos enteros.
+SQLite vive en `app.getPath('userData')`. Los TXT no se cargan completos en el Renderer y no se persiste cada movimiento: se guardan lotes, snapshots y totales agrupados auditables.
 
-## 2. Árbol de carpetas
+## 2. Dominio mensual
 
-```text
-src/
-  main/
-    database/{DatabaseService,MigrationService}.ts
-    ipc/registerIpcHandlers.ts
-    repositories/
-    services/
-    workers/PayrollProcessingWorker.ts
-    main.ts, window.ts
-  preload/preload.ts
-  renderer/
-    components/
-    views/
-    router/
-    stores/
-    styles/
-    App.vue, main.ts
-  shared/
-    enums/
-    payroll-layouts/uniformPayrollLayout.ts
-    schemas/
-    types/
-    utils/
-tests/{fixtures,unit,integration,e2e}/
-scripts/generate-benchmark-file.mjs
-docs/
-```
-
-## 3. Esquema SQLite
-
-La migración `001_initial_schema` crea `app_settings`, `concept_families`, `concept_rules`, `exclusion_rules`, `payroll_batches`, `payroll_records`, `batch_totals`, `generated_reports` y `audit_logs`, además de los índices del requerimiento. `schema_migrations` registra cada migración aplicada. Las reglas iniciales de ISR son seeds auditables, no condicionales dispersos.
-
-Relaciones principales:
+La migración inicial única crea `monthly_reconciliations`, `payroll_types`, `payroll_batches`, snapshots de conceptos, alias y retenidos, `batch_totals`, `report_artifacts` y `audit_logs`.
 
 ```text
-concept_families 1 ── n concept_rules
-concept_families 1 ── n payroll_batches
-payroll_batches  1 ── n payroll_records
-payroll_batches  1 ── n batch_totals
-payroll_batches  1 ── n generated_reports
-payroll_batches  n ── 0..1 payroll_batches (replaced_batch_id)
+concept_groups          1 ── n monthly_reconciliations
+monthly_reconciliations 1 ── n payroll_batches
+payroll_types           1 ── n payroll_batches
+payroll_batches         1 ── n batch_totals
+payroll_batches         1 ── n batch_*_snapshots
+monthly_reconciliations 1 ── 1 reporte mensual vigente
+payroll_batches         1 ── 1 TXT Completo vigente por lote
 ```
 
-## 4. Wireframes textuales
+Una combinación `año + mes + grupo` identifica el expediente. Cada mes admite dos quincenas (`2 × mes − 1` y `2 × mes`). Solo existe una versión activa por `expediente + quincena + tipo de nómina`; las versiones sustituidas se conservan inactivas para garantizar un reemplazo seguro, pero no contribuyen a Histórico, Consolidado, Matriz anual ni reportes.
 
-### Estructura global
+## 3. Flujo operativo
 
 ```text
-┌───────────────┬────────────────────────────────────────────────────┐
-│ Marca         │ Título / breadcrumb                    Ayuda       │
-│ Inicio        ├────────────────────────────────────────────────────┤
-│ Nueva import. │ Área central desplazable                          │
-│ Histórico     │                                                    │
-│ Consolidado   │                                                    │
-│ Matriz anual  │                                                    │
-│ Reglas        │                                                    │
-│ Configuración │                                                    │
-│ Respaldos     │                                                    │
-└───────────────┴────────────────────────────────────────────────────┘
+[Periodo]   año | mes | grupo de conceptos
+[Matriz]    filas: tipos de nómina · columnas: las dos quincenas
+[Archivos]  TXT + metadatos inferidos/confirmados + reemplazo
+[Conceptos] selección y alta rápida independiente por TXT
+[Retenidos] lista y validación independiente por TXT
+[Actualizar] proceso secuencial + conciliación + reporte mensual
 ```
 
-### Nueva importación
+Objetivo: integrar las nóminas que llegan durante el mes sin volver a sumar versiones reemplazadas. La acción principal es **Actualizar expediente**. Se bloquean archivos incompatibles, metadatos inconsistentes, hashes activos duplicados, dos archivos para el mismo espacio en una sola actualización y reemplazos no confirmados.
+
+Los estados loading, empty, error, success y disabled están presentes. El foco de errores es visible, las tablas soportan desplazamiento horizontal y el procesamiento muestra avance por archivo.
+
+## 4. Reemplazo seguro
+
+1. El candidato se procesa como lote inactivo.
+2. Debe conciliar en centavos y generar su `TXT_Completo`.
+3. En una transacción se desactiva la versión anterior y se activa el candidato.
+4. Se recalculan los totales exclusivamente desde lotes activos.
+5. Se sobrescribe la misma ruta del reporte mensual mediante archivo temporal.
+6. Si falla antes de completar el cambio, el lote y reporte anteriores permanecen vigentes y el candidato queda fallido.
+
+Los reintegros usan factor `−1`; nunca se acumulan importes en punto flotante.
+
+## 5. Salidas
 
 ```text
-[1 Archivo]  zona de selección + metadatos
-[2 Datos]    año | quincena | tipo | ISR
-[3 Exclus.]  retenidos | cancelados | otras | auditoría
-[4 Preflight] resumen de compatibilidad + tabla de 10 líneas
-[5 Procesar] resumen fijo + acción primaria
-              progreso determinado / cancelar
-              resultado / total / reportes / histórico
+/{año}/M{mes}/{grupo}/Totales_{grupo}_{año}_M{mes}.xlsx
+/{año}/M{mes}/{grupo}/Q{quincena}/TXT_Completo_...xlsx
 ```
 
-Objetivo: procesar un TXT oficial con parámetros revisados explícitamente. Acción principal: **Procesar archivo**. Riesgos: archivo incompatible, metadatos equivocados, duplicado, reglas no confirmadas, cancelación y conciliación distinta de cero. Jerarquía: compatibilidad y datos primero; acción final solo habilitada con preflight ≥95 %. Estados: skeleton acotado, vacío instructivo, error recuperable, éxito con conciliación, controles deshabilitados durante proceso. Volumen: muestras y páginas; nunca detalle completo.
-
-### Histórico
-
-Filtros compactos arriba, tabla paginada con encabezado fijo, total alineado a la derecha, estado textual + color y menú de acciones por lote. En vacío se ofrece iniciar una importación.
-
-### Consolidado y matriz anual
-
-Selectores de periodo en barra superior, tabla contable como elemento principal, totales en fila de cierre y estados “no cargado” explícitos. Sin gráficas decorativas.
-
-## 5. Fases
-
-1. Base Electron/Vue, seguridad, navegación, pruebas.
-2. Sistema visual, SCSS Bootstrap y shell.
-3. SQLite, migraciones, seeds y dominio.
-4. Archivo, layout uniforme, preflight y vista previa.
-5. Stream, worker, progreso, cancelación y persistencia.
-6. Reglas ISR, exclusiones, centavos y totales.
-7. Excel detalle/totales y conciliación.
-8. Histórico, duplicados, versiones y regeneración.
-9. Consolidado, matriz anual y respaldos.
-10. Volumen, E2E, empaquetado e instalador.
+El reporte mensual incluye `Resumen mensual`, `Por nómina`, `Desglose agrupado`, `Control` y `Retenidos`. La hoja de control reconcilia contra lotes activos con diferencia cero. No se generan `Detalle_Conceptos` ni `Totales_Conceptos` por archivo, ni versiones históricas del reporte mensual.
 
 ## 6. Riesgos y mitigaciones
 
-- **Campos no confirmados**: `component`, `fundingSource` y `employeeNumber` conservan nombres provisionales y se documentan en el layout; no se inventa semántica.
-- **Reglas de retenidos/cancelados**: no se activa un valor mágico. Se ofrecen motores y seeds conservadores; las reglas requieren evidencia institucional.
-- **Native modules**: `better-sqlite3` requiere rebuild para Electron; `electron-builder install-app-deps` forma parte del flujo.
-- **500,000+ filas**: stream, lotes SQLite, throttling de 250 ms, paginación y Excel streaming.
-- **Cierre inesperado**: los lotes `PROCESSING` se marcan `INTERRUPTED` al iniciar.
-- **Archivo abierto en Excel**: el error de escritura se traduce a mensaje comprensible y el lote conserva evidencia.
-- **Límite de Excel**: rotación de hoja antes de 1,048,576 filas.
-
-## 7. Supuestos pendientes
-
-- Los índices 11, 12, 14–21 están confirmados provisionalmente por la muestra.
-- Los campos 0–10 y 13 siguen como `rawFieldNN`; para el primer caso se exponen provisionalmente 0 como componente, 1 como fuente y 4 como número de empleado, marcados como **pendientes de confirmación** y centralizados en un solo archivo.
-- La codificación inicial es UTF-8; el preflight informa reemplazos de caracteres. No se autocorrige una línea desplazada.
-- Las reglas seed de ISR usan código/descripción/movimiento de la muestra. Las exclusiones seed permanecen inactivas hasta confirmación institucional.
-- El usuario local solo se incorpora como metadato si el sistema lo proporciona; nunca se envía fuera del equipo.
-
+- **Metadatos erróneos**: se extraen del patrón `QNA_{quincena}_{año}_{tipo}.txt` y se bloquean contradicciones.
+- **Duplicidad**: SHA-256 y el índice único del espacio activo evitan doble suma.
+- **Archivo abierto en Excel**: el error se comunica y la versión anterior conserva vigencia.
+- **Volumen**: stream, totales agrupados, progreso limitado a intervalos y Excel streaming para TXT Completo.
+- **Límite de Excel**: el contenido rota antes de 1,048,576 filas.
+- **Cierre inesperado**: los lotes en proceso se marcan interrumpidos al iniciar.
+- **Esquema de desarrollo anterior**: la aplicación ofrece eliminar base, WAL y SHM y recrear desde la única migración vigente; no archiva automáticamente.

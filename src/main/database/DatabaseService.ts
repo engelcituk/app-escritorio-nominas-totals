@@ -94,6 +94,11 @@ RETRO COMPENSACION HAC
 REINTEGRO DE ISR PAGADO EN EXCESO`.trim().split('\n');
 
 const ISR_NAMES = new Set(['ISR POR SALARIOS', 'ISR EVENTUALES', 'ISR RETRO', 'ISR EVENTUALES RETRO', 'REINTEGRO DE ISR PAGADO EN EXCESO']);
+const PAYROLL_TYPES = [
+  ['SUELDOS', 'Sueldos'], ['ASIMILADOS', 'Asimilados'], ['COMPENSACIONES', 'Compensaciones'],
+  ['HONORARIOS', 'Honorarios'], ['HONORARIOS_FASP', 'Honorarios FASP'], ['EXTRAORDINARIOS', 'Extraordinarios'],
+  ['RETROACTIVOS', 'Retroactivos'], ['PRIMA_VACACIONAL', 'Prima vacacional'], ['PAGOS_DIVERSOS', 'Pagos diversos'], ['OTROS', 'Otros'],
+] as const;
 
 export class IncompatibleSchemaError extends Error {
   constructor() { super('La base local usa un esquema de desarrollo anterior.'); this.name = 'IncompatibleSchemaError'; }
@@ -117,6 +122,7 @@ export class DatabaseService {
   close(): void { this.connection.close(); }
 
   private seed(): void {
+    this.seedPayrollTypes();
     const count = (this.connection.prepare('SELECT COUNT(*) AS count FROM payroll_concepts').get() as { count: number }).count;
     if (count > 0) { this.synchronizeSeededConceptNames(); return; }
     const now = new Date().toISOString();
@@ -138,6 +144,13 @@ export class DatabaseService {
     })();
   }
 
+  private seedPayrollTypes(): void {
+    const now = new Date().toISOString();
+    const insert = this.connection.prepare(`INSERT INTO payroll_types(code,name,active,created_at,updated_at)
+      VALUES (?,?,1,?,?) ON CONFLICT(code) DO NOTHING`);
+    this.connection.transaction(() => { for (const [code, name] of PAYROLL_TYPES) insert.run(code, name, now, now); })();
+  }
+
   private synchronizeSeededConceptNames(): void {
     const now = new Date().toISOString();
     const update = this.connection.prepare(`UPDATE payroll_concepts SET name=?,updated_at=? WHERE code=? AND name<>?`);
@@ -154,15 +167,17 @@ export class DatabaseService {
   }
 
   private validateSchema(): void {
-    const required = ['concept_groups', 'payroll_concepts', 'concept_aliases', 'import_groups', 'batch_concept_snapshots', 'batch_retained_employees'];
+    const required = ['concept_groups', 'payroll_concepts', 'concept_aliases', 'payroll_types', 'monthly_reconciliations',
+      'payroll_batches', 'batch_concept_snapshots', 'batch_retained_employees', 'batch_totals', 'report_artifacts'];
     const tables = new Set((this.connection.prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`).all() as Array<{ name: string }>).map((row) => row.name));
     if (required.some((name) => !tables.has(name))) throw new IncompatibleSchemaError();
     const requiredColumns: Record<string, string[]> = {
-      import_groups: ['year', 'version', 'file_count', 'total_amount_cents'],
-      payroll_batches: ['group_id', 'source_order', 'fortnight', 'file_hash_sha256', 'attempt', 'replaced_batch_id'],
+      monthly_reconciliations: ['year', 'month', 'concept_group_id', 'revision', 'total_amount_cents'],
+      payroll_batches: ['reconciliation_id', 'month', 'fortnight', 'payroll_type_id', 'file_hash_sha256', 'is_active', 'replaced_batch_id'],
       payroll_concepts: ['code', 'group_id', 'operation_factor', 'active'],
       concept_aliases: ['concept_id', 'normalized_description', 'active'],
       batch_retained_employees: ['batch_id', 'employee_number', 'missing_acknowledged'],
+      batch_totals: ['batch_id', 'source_key', 'account_code', 'total_amount_cents'],
     };
     for (const [table, columns] of Object.entries(requiredColumns)) {
       const actual = new Set((this.connection.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((row) => row.name));

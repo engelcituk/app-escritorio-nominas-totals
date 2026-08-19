@@ -14,10 +14,10 @@ const filtered = computed(() => { const query = canonicalizeConceptDescription(s
   !query || canonicalizeConceptDescription(`${option.sourceDescription} ${option.catalogConcept?.name ?? ''} ${option.catalogConcept?.groupName ?? ''}`).includes(query)); });
 const selectedOptions = computed(() => { const ids = new Set<number>(); return catalogued.value.filter((option) => {
   const id = option.catalogConcept!.id; if (!props.modelValue.includes(id) || ids.has(id)) return false; ids.add(id); return true; }); });
-const summary = computed(() => props.loading ? 'Analizando conceptos…'
-  : props.modelValue.length ? `${props.modelValue.length} conceptos seleccionados` : 'Seleccionar conceptos');
+const summary = computed(() => props.modelValue.length ? `${props.modelValue.length} conceptos seleccionados`
+  : props.loading ? 'Seleccionar mientras se analiza' : 'Seleccionar conceptos');
 
-async function toggle(): Promise<void> { if (props.disabled || props.loading) return; open.value = !open.value; if (open.value) { await nextTick(); searchInput.value?.focus(); } }
+async function toggle(): Promise<void> { if (props.disabled) return; open.value = !open.value; if (open.value) { await nextTick(); searchInput.value?.focus(); } }
 function update(id: number, selected: boolean): void { const next = selected ? [...new Set([...props.modelValue, id])] : props.modelValue.filter((value) => value !== id);
   emit('update:modelValue', next); emit('change'); }
 function selectVisible(): void { const ids = filtered.value.flatMap((option) => option.catalogConcept ? [option.catalogConcept.id] : []);
@@ -36,12 +36,13 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', clickOutside));
         <button type="button" :aria-label="`Quitar ${option.catalogConcept!.name}`" @click="update(option.catalogConcept!.id, false)"><i class="bi bi-x" aria-hidden="true" /></button>
       </span>
     </div>
-    <button class="concept-multiselect__trigger" type="button" :aria-expanded="open" :aria-controls="listId" :aria-busy="loading" :disabled="disabled || loading" @click="toggle">
-      <span><strong>{{ summary }}</strong><small>{{ loading ? `Revisando ${filename}` : `${options.length} detectados en ${filename}` }}</small></span>
+    <button class="concept-multiselect__trigger" type="button" :aria-expanded="open" :aria-controls="listId" :aria-busy="loading" :disabled="disabled" @click="toggle">
+      <span><strong>{{ summary }}</strong><small>{{ loading ? `Catálogo disponible; actualizando coincidencias de ${filename}` : `${options.length} detectados en ${filename}` }}</small></span>
       <span v-if="loading" class="spinner-border spinner-border-sm" aria-hidden="true" />
       <i v-else class="bi" :class="open ? 'bi-chevron-up' : 'bi-chevron-down'" aria-hidden="true" />
     </button>
     <div v-if="open" class="concept-multiselect__panel">
+      <div v-if="loading" class="concept-multiselect__loading" role="status"><span class="spinner-border spinner-border-sm" aria-hidden="true" /> Puedes seleccionar conceptos ahora; los conteos se completarán al terminar el análisis.</div>
       <div class="concept-multiselect__toolbar">
         <label class="visually-hidden" :for="inputId">Buscar conceptos detectados</label>
         <div class="input-group"><span class="input-group-text"><i class="bi bi-search" aria-hidden="true" /></span><input :id="inputId" ref="searchInput" v-model="search" class="form-control" placeholder="Buscar por concepto o grupo" /></div>
@@ -56,7 +57,7 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', clickOutside));
             <span><strong>{{ option.catalogConcept.name }}</strong><small>{{ option.sourceDescription }}</small></span>
           </label>
           <div v-else class="concept-multiselect__unknown"><span><span class="badge text-bg-warning">Sin catalogar</span><strong>{{ option.sourceDescription }}</strong></span><button class="btn btn-outline-primary btn-sm" type="button" @click="$emit('create', option)">Dar de alta</button></div>
-          <div class="concept-multiselect__meta"><span>{{ option.recordCount.toLocaleString('es-MX') }} registros</span><MoneyValue :cents="option.originalAmountCents" /><span v-if="option.catalogConcept">{{ option.catalogConcept.groupName || 'Sin grupo' }} · {{ option.catalogConcept.operationFactor === -1 ? 'Resta' : 'Suma' }}</span></div>
+          <div class="concept-multiselect__meta"><span>{{ loading && !option.recordCount ? 'Conteo pendiente' : `${option.recordCount.toLocaleString('es-MX')} registros` }}</span><MoneyValue v-if="!loading || option.recordCount" :cents="option.originalAmountCents" /><span v-if="option.catalogConcept">{{ option.catalogConcept.groupName || 'Sin grupo' }} · {{ option.catalogConcept.operationFactor === -1 ? 'Resta' : 'Suma' }}</span></div>
         </div>
       </div>
     </div>

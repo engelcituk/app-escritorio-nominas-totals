@@ -1,9 +1,9 @@
 export interface Migration { version: number; name: string; sql: string }
 
-// Mientras el producto continúa en desarrollo se mantiene una única migración inicial.
+// Esquema inicial definitivo del expediente mensual. Durante desarrollo las bases incompatibles se recrean.
 export const MIGRATIONS: readonly Migration[] = [{
   version: 1,
-  name: 'initial_schema_general_concepts',
+  name: 'initial_monthly_reconciliation_schema',
   sql: `
     CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL);
@@ -21,30 +21,35 @@ export const MIGRATIONS: readonly Migration[] = [{
       source_description TEXT NOT NULL, normalized_description TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL, updated_at TEXT NOT NULL
     );
-    CREATE TABLE IF NOT EXISTS import_groups (
-      id INTEGER PRIMARY KEY, year INTEGER NOT NULL, version INTEGER NOT NULL DEFAULT 1, status TEXT NOT NULL,
-      file_count INTEGER NOT NULL DEFAULT 0, completed_files INTEGER NOT NULL DEFAULT 0, total_lines INTEGER NOT NULL DEFAULT 0,
-      valid_lines INTEGER NOT NULL DEFAULT 0, excluded_lines INTEGER NOT NULL DEFAULT 0, invalid_lines INTEGER NOT NULL DEFAULT 0,
-      total_amount_cents INTEGER NOT NULL DEFAULT 0, replaced_group_id INTEGER REFERENCES import_groups(id),
-      started_at TEXT, completed_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    CREATE TABLE IF NOT EXISTS payroll_types (
+      id INTEGER PRIMARY KEY, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS monthly_reconciliations (
+      id INTEGER PRIMARY KEY, year INTEGER NOT NULL, month INTEGER NOT NULL CHECK(month BETWEEN 1 AND 12),
+      concept_group_id INTEGER NOT NULL REFERENCES concept_groups(id), status TEXT NOT NULL DEFAULT 'DRAFT',
+      revision INTEGER NOT NULL DEFAULT 0, file_count INTEGER NOT NULL DEFAULT 0, completed_files INTEGER NOT NULL DEFAULT 0,
+      total_lines INTEGER NOT NULL DEFAULT 0, valid_lines INTEGER NOT NULL DEFAULT 0, excluded_lines INTEGER NOT NULL DEFAULT 0,
+      invalid_lines INTEGER NOT NULL DEFAULT 0, total_amount_cents INTEGER NOT NULL DEFAULT 0,
+      started_at TEXT, completed_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+      UNIQUE(year,month,concept_group_id)
     );
     CREATE TABLE IF NOT EXISTS payroll_batches (
-      id INTEGER PRIMARY KEY, group_id INTEGER NOT NULL REFERENCES import_groups(id) ON DELETE CASCADE, source_order INTEGER NOT NULL,
-      year INTEGER NOT NULL, fortnight INTEGER NOT NULL, payroll_type TEXT NOT NULL, layout_code TEXT NOT NULL, layout_version INTEGER NOT NULL,
+      id INTEGER PRIMARY KEY, reconciliation_id INTEGER NOT NULL REFERENCES monthly_reconciliations(id) ON DELETE CASCADE,
+      source_order INTEGER NOT NULL, year INTEGER NOT NULL, month INTEGER NOT NULL, fortnight INTEGER NOT NULL,
+      payroll_type_id INTEGER NOT NULL REFERENCES payroll_types(id), layout_code TEXT NOT NULL, layout_version INTEGER NOT NULL,
       original_filename TEXT NOT NULL, original_file_path TEXT NOT NULL, file_size INTEGER NOT NULL, file_hash_sha256 TEXT NOT NULL,
-      lineage_batch_id INTEGER REFERENCES payroll_batches(id), version INTEGER NOT NULL DEFAULT 1,
-      attempt INTEGER NOT NULL DEFAULT 1, status TEXT NOT NULL,
+      version INTEGER NOT NULL DEFAULT 1, status TEXT NOT NULL, is_active INTEGER NOT NULL DEFAULT 0,
       total_lines INTEGER NOT NULL DEFAULT 0, valid_lines INTEGER NOT NULL DEFAULT 0, excluded_lines INTEGER NOT NULL DEFAULT 0,
       invalid_lines INTEGER NOT NULL DEFAULT 0, unclassified_lines INTEGER NOT NULL DEFAULT 0, matching_lines INTEGER NOT NULL DEFAULT 0,
       total_amount_cents INTEGER NOT NULL DEFAULT 0, started_at TEXT, completed_at TEXT,
-      replaced_batch_id INTEGER REFERENCES payroll_batches(id), created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-      UNIQUE(group_id, source_order, attempt)
+      replaced_batch_id INTEGER REFERENCES payroll_batches(id), created_at TEXT NOT NULL, updated_at TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS batch_concept_snapshots (
       id INTEGER PRIMARY KEY, batch_id INTEGER NOT NULL REFERENCES payroll_batches(id) ON DELETE CASCADE,
       source_concept_id INTEGER NOT NULL, concept_code TEXT NOT NULL, concept_name TEXT NOT NULL, group_code TEXT, group_name TEXT,
       operation_factor INTEGER NOT NULL, selected INTEGER NOT NULL, created_at TEXT NOT NULL,
-      UNIQUE(batch_id, source_concept_id)
+      UNIQUE(batch_id,source_concept_id)
     );
     CREATE TABLE IF NOT EXISTS batch_alias_snapshots (
       id INTEGER PRIMARY KEY, batch_id INTEGER NOT NULL REFERENCES payroll_batches(id) ON DELETE CASCADE,
@@ -55,30 +60,32 @@ export const MIGRATIONS: readonly Migration[] = [{
       id INTEGER PRIMARY KEY, batch_id INTEGER NOT NULL REFERENCES payroll_batches(id) ON DELETE CASCADE,
       employee_number TEXT NOT NULL, employee_name TEXT, found_records INTEGER NOT NULL DEFAULT 0,
       excluded_records INTEGER NOT NULL DEFAULT 0, missing_acknowledged INTEGER NOT NULL DEFAULT 0,
-      created_at TEXT NOT NULL, UNIQUE(batch_id, employee_number)
+      created_at TEXT NOT NULL, UNIQUE(batch_id,employee_number)
     );
     CREATE TABLE IF NOT EXISTS batch_totals (
       id INTEGER PRIMARY KEY, batch_id INTEGER NOT NULL REFERENCES payroll_batches(id) ON DELETE CASCADE,
       source_concept_id INTEGER NOT NULL, concept_code TEXT NOT NULL, concept_name TEXT NOT NULL, group_code TEXT, group_name TEXT,
-      source_payroll_code TEXT, source_description TEXT NOT NULL, account_code TEXT, movement_type TEXT,
-      operation_factor INTEGER NOT NULL, record_count INTEGER NOT NULL, original_amount_cents INTEGER NOT NULL,
-      total_amount_cents INTEGER NOT NULL, created_at TEXT NOT NULL
+      source_payroll_code TEXT, source_description TEXT NOT NULL, source_key TEXT NOT NULL, account_code TEXT,
+      movement_type TEXT, operation_factor INTEGER NOT NULL, record_count INTEGER NOT NULL,
+      original_amount_cents INTEGER NOT NULL, total_amount_cents INTEGER NOT NULL, created_at TEXT NOT NULL
     );
-    CREATE TABLE IF NOT EXISTS generated_reports (
+    CREATE TABLE IF NOT EXISTS report_artifacts (
       id INTEGER PRIMARY KEY, batch_id INTEGER REFERENCES payroll_batches(id) ON DELETE CASCADE,
-      group_id INTEGER REFERENCES import_groups(id) ON DELETE CASCADE, report_type TEXT NOT NULL, filename TEXT NOT NULL,
-      file_path TEXT NOT NULL, file_hash_sha256 TEXT NOT NULL, generated_at TEXT NOT NULL,
-      CHECK((batch_id IS NOT NULL AND group_id IS NULL) OR (batch_id IS NULL AND group_id IS NOT NULL))
+      reconciliation_id INTEGER REFERENCES monthly_reconciliations(id) ON DELETE CASCADE,
+      report_type TEXT NOT NULL, filename TEXT NOT NULL, file_path TEXT NOT NULL, file_hash_sha256 TEXT NOT NULL, updated_at TEXT NOT NULL,
+      CHECK((batch_id IS NOT NULL AND reconciliation_id IS NULL) OR (batch_id IS NULL AND reconciliation_id IS NOT NULL))
     );
     CREATE TABLE IF NOT EXISTS audit_logs (
       id INTEGER PRIMARY KEY, action TEXT NOT NULL, entity_type TEXT NOT NULL, entity_id TEXT,
       description TEXT NOT NULL, metadata_json TEXT, created_at TEXT NOT NULL
     );
-    CREATE INDEX IF NOT EXISTS idx_alias_normalized ON concept_aliases(normalized_description);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_active_alias_unique ON concept_aliases(normalized_description) WHERE active=1;
-    CREATE INDEX IF NOT EXISTS idx_batches_group ON payroll_batches(group_id, source_order);
-    CREATE INDEX IF NOT EXISTS idx_batches_period ON payroll_batches(year, fortnight, payroll_type);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_active_batch_slot ON payroll_batches(reconciliation_id,fortnight,payroll_type_id) WHERE is_active=1;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_report_batch_type ON report_artifacts(batch_id,report_type) WHERE batch_id IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_report_month_type ON report_artifacts(reconciliation_id,report_type) WHERE reconciliation_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_alias_normalized ON concept_aliases(normalized_description);
+    CREATE INDEX IF NOT EXISTS idx_batches_month ON payroll_batches(reconciliation_id,fortnight,payroll_type_id,is_active);
     CREATE INDEX IF NOT EXISTS idx_batches_hash ON payroll_batches(file_hash_sha256);
-    CREATE INDEX IF NOT EXISTS idx_totals_batch ON batch_totals(batch_id, source_concept_id, account_code);
+    CREATE INDEX IF NOT EXISTS idx_totals_batch ON batch_totals(batch_id,source_concept_id,source_key,account_code);
   `,
 }] as const;

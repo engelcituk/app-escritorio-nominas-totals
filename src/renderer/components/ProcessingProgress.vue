@@ -2,8 +2,8 @@
 import type { ProcessingProgress } from '@shared/types/payroll';
 defineProps<{ progress: ProcessingProgress }>();
 const labels: Record<string, string> = { INSPECTING: 'Inspeccionando', VALIDATING: 'Validando', READING: 'Leyendo archivo', CLASSIFYING: 'Clasificando',
-  SAVING: 'Guardando registros', CALCULATING: 'Calculando totales', BUILDING_DETAIL_REPORT: 'Generando detalle',
-  BUILDING_TOTALS_REPORT: 'Generando totales', COMPLETED: 'Completado' };
+  SAVING: 'Guardando agrupaciones', CALCULATING: 'Calculando totales', BUILDING_SOURCE_REPORT: 'Generando TXT completo',
+  BUILDING_MONTHLY_REPORT: 'Actualizando reporte mensual', COMPLETED: 'Completado' };
 </script>
 <template>
   <div class="processing-panel" aria-live="polite">

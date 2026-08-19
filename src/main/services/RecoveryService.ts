@@ -6,7 +6,8 @@ export class RecoveryService {
   recoverInterruptedBatches(): number {
     const now = new Date().toISOString();
     const batches = this.database.prepare(`UPDATE payroll_batches SET status = 'INTERRUPTED', updated_at = ? WHERE status = 'PROCESSING'`).run(now).changes;
-    this.database.prepare(`UPDATE import_groups SET status = 'PARTIAL', updated_at = ? WHERE status = 'PROCESSING'`).run(now);
+    this.database.prepare(`UPDATE monthly_reconciliations SET status = CASE WHEN completed_files > 0 THEN 'COMPLETED' ELSE 'DRAFT' END,
+      updated_at = ? WHERE status = 'PROCESSING'`).run(now);
     return batches;
   }
 }

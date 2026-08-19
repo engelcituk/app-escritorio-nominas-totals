@@ -4,9 +4,9 @@ import { copyFile, mkdtemp, rm } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { app, dialog, ipcMain, shell, type BrowserWindow } from 'electron';
 import { conceptAliasDraftSchema, conceptGroupDraftSchema, fileTokenSchema, historyQuerySchema, payrollConceptDraftSchema,
-  processImportGroupRequestSchema, retainedValidationSchema } from '../../shared/schemas/ipc.js';
-import type { BatchSummary, ConceptAlias, ConceptGroup, ImportGroupSummary, PayrollConcept, RetainedValidationResult,
-  SelectedFile } from '../../shared/types/payroll.js';
+  monthlyReconciliationKeySchema, payrollTypeDraftSchema, processMonthlyImportRequestSchema, retainedValidationSchema } from '../../shared/schemas/ipc.js';
+import type { BatchSummary, ConceptAlias, ConceptGroup, MonthlyReconciliationSummary, PayrollConcept, PayrollTypeDraft,
+  PayrollTypeSummary, RetainedValidationResult, SelectedFile } from '../../shared/types/payroll.js';
 import { canonicalConceptName, canonicalizeConceptDescription } from '../../shared/utils/normalization.js';
 import { DatabaseService } from '../database/DatabaseService.js';
 import { BackupService } from '../services/BackupService.js';
@@ -33,7 +33,7 @@ export function registerIpcHandlers(windowProvider: () => BrowserWindow | null, 
       const rules = db.connection.prepare(ACTIVE_CONCEPT_MATCHERS_SQL).all() as ConceptMatchRule[];
       const result = await inspectPayrollFile(path, { token: payload.fileToken, name: basename(path), size: info.size,
         modifiedAt: info.mtime.toISOString() }, payload.includePreview, rules);
-      const duplicate = db.connection.prepare(`SELECT id FROM payroll_batches WHERE file_hash_sha256=? AND status NOT IN ('FAILED','CANCELLED','SUPERSEDED')
+      const duplicate = db.connection.prepare(`SELECT id FROM payroll_batches WHERE file_hash_sha256=? AND is_active=1
         ORDER BY id DESC LIMIT 1`).get(result.fileHashSha256) as { id: number } | undefined;
       result.historicalDuplicateBatchId = duplicate?.id ?? null;
       if (duplicate) result.warnings.push(`Este contenido ya fue procesado en el lote ${duplicate.id}.`);
@@ -43,8 +43,8 @@ export function registerIpcHandlers(windowProvider: () => BrowserWindow | null, 
   ipcMain.handle('directory:select-export', async () => { const result = await dialog.showOpenDialog(windowProvider()!, {
     title: 'Seleccionar carpeta de reportes', properties: ['openDirectory', 'createDirectory'] }); const path = result.filePaths[0];
     if (result.canceled || !path) return null; const token = randomUUID(); directoryTokens.set(token, path); return { token, name: path }; });
-  ipcMain.handle('payroll:process-group', (_event, raw: unknown) => {
-    const request = processImportGroupRequestSchema.parse(raw); const files = request.files.map((file) => {
+  ipcMain.handle('payroll:process-month', (_event, raw: unknown) => {
+    const request = processMonthlyImportRequestSchema.parse(raw); const files = request.files.map((file) => {
       const filePath = resolveToken(fileTokens, file.fileToken, 'Selecciona nuevamente los archivos de nómina.'); return { filePath, name: basename(filePath) }; });
     const db = new DatabaseService(databasePath); const setting = db.connection.prepare(`SELECT value FROM app_settings WHERE key='reports_directory'`).get() as { value: string } | undefined; db.close();
     const outputDirectory = request.exportDirectoryToken ? resolveToken(directoryTokens, request.exportDirectoryToken, 'Selecciona nuevamente la carpeta de reportes.')
@@ -67,7 +67,6 @@ export function registerIpcHandlers(windowProvider: () => BrowserWindow | null, 
     return { matches, missingCount: matches.filter((item) => !item.found).length };
   });
   ipcMain.handle('payroll:cancel', (_event, id: unknown) => processing.cancel(String(id)));
-  ipcMain.handle('payroll:resume-group', (_event, id: unknown) => ({ processId: processing.resume(Number(id)) }));
 
   ipcMain.handle('concepts:list', () => listCatalog(databasePath));
   ipcMain.handle('concepts:save-group', (_event, raw: unknown) => saveGroup(databasePath, conceptGroupDraftSchema.parse(raw)));
@@ -77,11 +76,14 @@ export function registerIpcHandlers(windowProvider: () => BrowserWindow | null, 
     const aliasId = Number(id); db.connection.transaction(() => { db.connection.prepare('UPDATE concept_aliases SET active=0,updated_at=? WHERE id=?').run(now, aliasId);
       db.connection.prepare(`INSERT INTO audit_logs(action,entity_type,entity_id,description,created_at)
         VALUES ('DEACTIVATE','CONCEPT_ALIAS',?,'Se desactivó un alias de concepto.',?)`).run(String(aliasId), now); })(); } finally { db.close(); } });
+  ipcMain.handle('payroll-types:list', (_event, includeInactive: unknown) => listPayrollTypes(databasePath, Boolean(includeInactive)));
+  ipcMain.handle('payroll-types:save', (_event, raw: unknown) => savePayrollType(databasePath, payrollTypeDraftSchema.parse(raw)));
+  ipcMain.handle('monthly:get-or-create', (_event, raw: unknown) => getOrCreateMonthly(databasePath, monthlyReconciliationKeySchema.parse(raw)));
 
   ipcMain.handle('history:list', (_event, payload: unknown) => listBatchHistory(databasePath, payload));
-  ipcMain.handle('history:groups', (_event, payload: unknown) => listGroupHistory(databasePath, payload));
+  ipcMain.handle('history:monthly', (_event, payload: unknown) => listMonthlyHistory(databasePath, payload));
   ipcMain.handle('report:open-folder', (_event, id: unknown) => openReport(databasePath, 'batch_id', Number(id)));
-  ipcMain.handle('report:open-group-folder', (_event, id: unknown) => openReport(databasePath, 'group_id', Number(id)));
+  ipcMain.handle('report:open-month-folder', (_event, id: unknown) => openReport(databasePath, 'reconciliation_id', Number(id)));
   ipcMain.handle('settings:get', () => { const db = new DatabaseService(databasePath); const rows = db.connection.prepare('SELECT key,value FROM app_settings').all() as Array<{ key: string; value: string }>; db.close(); return Object.fromEntries(rows.map((row) => [row.key, row.value])); });
   ipcMain.handle('settings:update', (_event, payload: unknown) => updateSettings(databasePath, payload));
   ipcMain.handle('backup:create', async () => createBackup(databasePath, windowProvider));
@@ -134,36 +136,56 @@ function insertAlias(db: DatabaseService, conceptId: number, description: string
     VALUES (?,?,?,1,?,?)`).run(conceptId, description, normalized, now, now).lastInsertRowid); }
   catch (error) { if (/UNIQUE/i.test(error instanceof Error ? error.message : '')) throw new Error('Esta descripción ya está asignada a otro concepto.'); throw error; } }
 
+function listPayrollTypes(databasePath:string,includeInactive=false):PayrollTypeSummary[]{ const db=new DatabaseService(databasePath); try{
+  return (db.connection.prepare(`SELECT pt.*,EXISTS(SELECT 1 FROM payroll_batches pb WHERE pb.payroll_type_id=pt.id) used FROM payroll_types pt
+    ${includeInactive?'':'WHERE pt.active=1'} ORDER BY pt.name`).all() as Array<Record<string,string|number>>).map(r=>({ id:Number(r.id),code:String(r.code),
+    name:String(r.name),active:Boolean(r.active),used:Boolean(r.used) })); }finally{db.close();} }
+function savePayrollType(databasePath:string,value:PayrollTypeDraft):number{ const db=new DatabaseService(databasePath); const now=new Date().toISOString(); try{
+  return db.connection.transaction(()=>{ if(value.id){ const current=db.connection.prepare('SELECT code FROM payroll_types WHERE id=?').get(value.id) as { code:string }|undefined;
+      if(!current)throw new Error('No se encontró el tipo de nómina.'); if(current.code!==value.code&&db.connection.prepare('SELECT 1 FROM payroll_batches WHERE payroll_type_id=? LIMIT 1').get(value.id))
+        throw new Error('El código de un tipo utilizado no puede modificarse.'); db.connection.prepare('UPDATE payroll_types SET code=?,name=?,active=?,updated_at=? WHERE id=?')
+        .run(value.code,value.name,value.active?1:0,now,value.id); return value.id; }
+    return Number(db.connection.prepare('INSERT INTO payroll_types(code,name,active,created_at,updated_at) VALUES (?,?,?,?,?)')
+      .run(value.code,value.name,value.active?1:0,now,now).lastInsertRowid); })(); }finally{db.close();} }
+
+function getOrCreateMonthly(databasePath:string,key:{ year:number;month:number;conceptGroupId:number }):MonthlyReconciliationSummary{ const db=new DatabaseService(databasePath); try{
+  let row=db.connection.prepare('SELECT id FROM monthly_reconciliations WHERE year=? AND month=? AND concept_group_id=?')
+    .get(key.year,key.month,key.conceptGroupId) as { id:number }|undefined; if(!row){ const now=new Date().toISOString(); row={ id:Number(db.connection.prepare(`INSERT INTO monthly_reconciliations
+      (year,month,concept_group_id,status,started_at,created_at,updated_at) VALUES (?,?,?,'DRAFT',?,?,?)`).run(key.year,key.month,key.conceptGroupId,now,now,now).lastInsertRowid) }; }
+  return mapMonthly(db,row.id); }finally{db.close();} }
+
 function listBatchHistory(databasePath: string, raw: unknown): { items: BatchSummary[]; total: number } {
-  const q = historyQuerySchema.parse(raw); const where = ['1=1']; const values: unknown[] = [];
-  if (q.year) { where.push('year=?'); values.push(q.year); } if (q.fortnight) { where.push('fortnight=?'); values.push(q.fortnight); }
-  if (q.payrollType) { where.push('payroll_type=?'); values.push(q.payrollType); } if (q.status) { where.push('status=?'); values.push(q.status); }
-  if (q.search) { where.push('original_filename LIKE ?'); values.push(`%${q.search.replace(/[%_]/g, '')}%`); }
-  const db = new DatabaseService(databasePath); const total = (db.connection.prepare(`SELECT COUNT(*) count FROM payroll_batches WHERE ${where.join(' AND ')}`).get(...values) as { count: number }).count;
-  const rows = db.connection.prepare(`SELECT * FROM payroll_batches WHERE ${where.join(' AND ')} ORDER BY created_at DESC LIMIT ? OFFSET ?`)
-    .all(...values, q.pageSize, (q.page - 1) * q.pageSize) as Array<Record<string, string | number | null>>; db.close();
+  const q=historyQuerySchema.parse(raw); const where=['1=1']; const values:unknown[]=[]; if(q.year){where.push('pb.year=?');values.push(q.year);} if(q.month){where.push('pb.month=?');values.push(q.month);}
+  if(q.fortnight){where.push('pb.fortnight=?');values.push(q.fortnight);} if(q.payrollTypeId){where.push('pb.payroll_type_id=?');values.push(q.payrollTypeId);}
+  if(q.status){where.push('pb.status=?');values.push(q.status);} if(q.search){where.push('pb.original_filename LIKE ?');values.push(`%${q.search.replace(/[%_]/g,'')}%`);}
+  const db=new DatabaseService(databasePath); const total=(db.connection.prepare(`SELECT COUNT(*) count FROM payroll_batches pb WHERE ${where.join(' AND ')}`).get(...values) as { count:number }).count;
+  const rows=db.connection.prepare(`SELECT pb.*,pt.code payroll_type_code,pt.name payroll_type_name FROM payroll_batches pb JOIN payroll_types pt ON pt.id=pb.payroll_type_id
+    WHERE ${where.join(' AND ')} ORDER BY pb.created_at DESC LIMIT ? OFFSET ?`).all(...values,q.pageSize,(q.page-1)*q.pageSize) as Array<Record<string,string|number|null>>; db.close();
   return { items: rows.map(mapBatch), total };
 }
-function listGroupHistory(databasePath: string, raw: unknown): { items: ImportGroupSummary[]; total: number } {
-  const q = historyQuerySchema.parse(raw); const where = ['1=1']; const values: unknown[] = [];
-  if (q.year) { where.push('g.year=?'); values.push(q.year); } if (q.status) { where.push('g.status=?'); values.push(q.status); }
-  if (q.fortnight) { where.push('EXISTS (SELECT 1 FROM payroll_batches p WHERE p.group_id=g.id AND p.fortnight=?)'); values.push(q.fortnight); }
-  const db = new DatabaseService(databasePath); const total = (db.connection.prepare(`SELECT COUNT(*) count FROM import_groups g WHERE ${where.join(' AND ')}`).get(...values) as { count: number }).count;
-  const groups = db.connection.prepare(`SELECT g.*,GROUP_CONCAT(DISTINCT p.fortnight) fortnights FROM import_groups g LEFT JOIN payroll_batches p ON p.group_id=g.id
-    WHERE ${where.join(' AND ')} GROUP BY g.id ORDER BY g.created_at DESC LIMIT ? OFFSET ?`).all(...values, q.pageSize, (q.page - 1) * q.pageSize) as Array<Record<string, string | number | null>>;
-  const items = groups.map((g): ImportGroupSummary => { const batches = (db.connection.prepare('SELECT * FROM payroll_batches WHERE group_id=? ORDER BY source_order').all(g.id) as Array<Record<string, string | number | null>>).map(mapBatch);
-    return { id: Number(g.id), year: Number(g.year), version: Number(g.version), status: String(g.status) as ImportGroupSummary['status'],
-      fortnights: String(g.fortnights ?? '').split(',').filter(Boolean).map(Number).sort((a, b) => a - b), fileCount: Number(g.file_count),
-      completedFiles: Number(g.completed_files), totalLines: Number(g.total_lines), excludedLines: Number(g.excluded_lines),
-      invalidLines: Number(g.invalid_lines), totalAmountCents: Number(g.total_amount_cents), completedAt: g.completed_at ? String(g.completed_at) : null, batches }; }); db.close(); return { items, total };
-}
-function mapBatch(r: Record<string, string | number | null>): BatchSummary { return { id: Number(r.id), year: Number(r.year), fortnight: Number(r.fortnight),
-  payrollType: String(r.payroll_type) as BatchSummary['payrollType'], version: Number(r.version), attempt: Number(r.attempt), originalFilename: String(r.original_filename),
-  status: String(r.status) as BatchSummary['status'], totalLines: Number(r.total_lines), excludedLines: Number(r.excluded_lines),
-  invalidLines: Number(r.invalid_lines), totalAmountCents: Number(r.total_amount_cents), completedAt: r.completed_at ? String(r.completed_at) : null }; }
-async function openReport(databasePath: string, column: 'batch_id' | 'group_id', id: number): Promise<boolean> { if (!Number.isInteger(id) || id < 1) return false;
-  const db = new DatabaseService(databasePath); const row = db.connection.prepare(`SELECT file_path FROM generated_reports WHERE ${column}=? ORDER BY generated_at DESC LIMIT 1`).get(id) as { file_path: string } | undefined; db.close();
-  if (!row || !existsSync(row.file_path)) return false; return (await shell.openPath(dirname(row.file_path))) === ''; }
+function listMonthlyHistory(databasePath:string,raw:unknown):{ items:MonthlyReconciliationSummary[];total:number }{ const q=historyQuerySchema.parse(raw);
+  const where=['mr.file_count > 0'];const values:unknown[]=[];if(q.year){where.push('mr.year=?');values.push(q.year);}if(q.month){where.push('mr.month=?');values.push(q.month);}
+  if(q.status){where.push('mr.status=?');values.push(q.status);}const db=new DatabaseService(databasePath);try{ const total=Number((db.connection.prepare(
+    `SELECT COUNT(*) count FROM monthly_reconciliations mr WHERE ${where.join(' AND ')}`).get(...values) as { count:number }).count);
+    const ids=(db.connection.prepare(`SELECT mr.id FROM monthly_reconciliations mr WHERE ${where.join(' AND ')} ORDER BY mr.year DESC,mr.month DESC LIMIT ? OFFSET ?`)
+      .all(...values,q.pageSize,(q.page-1)*q.pageSize) as Array<{ id:number }>).map(r=>r.id); return { items:ids.map(id=>mapMonthly(db,id)),total }; }finally{db.close();} }
+function mapMonthly(db:DatabaseService,id:number):MonthlyReconciliationSummary{ const r=db.connection.prepare(`SELECT mr.*,cg.code group_code,cg.name group_name,
+    ra.file_path report_path FROM monthly_reconciliations mr JOIN concept_groups cg ON cg.id=mr.concept_group_id LEFT JOIN report_artifacts ra
+    ON ra.reconciliation_id=mr.id AND ra.report_type='MONTHLY_TOTALS' WHERE mr.id=?`).get(id) as Record<string,string|number|null>|undefined;
+  if(!r)throw new Error('No se encontró el expediente mensual.'); const batches=(db.connection.prepare(`SELECT pb.*,pt.code payroll_type_code,pt.name payroll_type_name
+    FROM payroll_batches pb JOIN payroll_types pt ON pt.id=pb.payroll_type_id WHERE pb.reconciliation_id=? AND pb.is_active=1 ORDER BY pb.fortnight,pt.name`)
+    .all(id) as Array<Record<string,string|number|null>>).map(mapBatch); return { id:Number(r.id),year:Number(r.year),month:Number(r.month),conceptGroupId:Number(r.concept_group_id),
+    conceptGroupCode:String(r.group_code),conceptGroupName:String(r.group_name),revision:Number(r.revision),status:String(r.status) as MonthlyReconciliationSummary['status'],
+    fortnights:[...new Set(batches.filter(b=>b.active).map(b=>b.fortnight))].sort((a,b)=>a-b),fileCount:Number(r.file_count),completedFiles:Number(r.completed_files),
+    totalLines:Number(r.total_lines),excludedLines:Number(r.excluded_lines),invalidLines:Number(r.invalid_lines),totalAmountCents:Number(r.total_amount_cents),
+    completedAt:r.completed_at?String(r.completed_at):null,reportPath:r.report_path?String(r.report_path):null,batches }; }
+function mapBatch(r:Record<string,string|number|null>):BatchSummary{return{ id:Number(r.id),year:Number(r.year),month:Number(r.month),fortnight:Number(r.fortnight),
+  payrollTypeId:Number(r.payroll_type_id),payrollTypeCode:String(r.payroll_type_code),payrollTypeName:String(r.payroll_type_name),version:Number(r.version),
+  originalFilename:String(r.original_filename),active:Boolean(r.is_active),status:String(r.status) as BatchSummary['status'],totalLines:Number(r.total_lines),
+  excludedLines:Number(r.excluded_lines),invalidLines:Number(r.invalid_lines),totalAmountCents:Number(r.total_amount_cents),completedAt:r.completed_at?String(r.completed_at):null};}
+async function openReport(databasePath:string,column:'batch_id'|'reconciliation_id',id:number):Promise<boolean>{if(!Number.isInteger(id)||id<1)return false;
+  const db=new DatabaseService(databasePath);const row=db.connection.prepare(`SELECT file_path FROM report_artifacts WHERE ${column}=? ORDER BY updated_at DESC LIMIT 1`).get(id) as { file_path:string }|undefined;db.close();
+  if(!row||!existsSync(row.file_path))return false;return(await shell.openPath(dirname(row.file_path)))==='';}
 function updateSettings(databasePath: string, payload: unknown): void { const allowed = new Set(['minimum_year','maximum_year']); if (!payload || typeof payload !== 'object') throw new Error('La configuración no es válida.');
   const db = new DatabaseService(databasePath); const upsert = db.connection.prepare(`INSERT INTO app_settings(key,value,updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`);
   db.connection.transaction(() => { for (const [key, value] of Object.entries(payload)) { if (key === 'reports_directory_token' && typeof value === 'string') upsert.run('reports_directory', resolveToken(directoryTokens, value, 'Selecciona nuevamente la carpeta de reportes.'), new Date().toISOString());

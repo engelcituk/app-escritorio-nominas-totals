@@ -7,7 +7,7 @@ import { PayrollRecordEvaluator } from '../../src/main/services/PayrollRecordEva
 const record: ParsedPayrollRecord = { lineNumber: 1, dependencyKey: '1-1', employeeNumber: '0007', employeeName: 'PERSONA',
   positionName: 'PUESTO', movementType: 'P', movementClassifier: '1', conceptCode: '900',
   conceptDescriptionOriginal: 'REINTEGRO DE ISR PAGADO EN EXCESO', amountRaw: '125.50', accountCode: 'CUENTA',
-  fundingSource: 'CO', paymentCenter: '1' };
+  sourceKey: '1508-26-001', fundingSource: 'CO', paymentCenter: '1' };
 const rule: ConceptMatchRule = { aliasId: 9, conceptId: 6, conceptCode: 'ISR_REINTEGRO_EXCESO', conceptName: 'Reintegro ISR',
   groupId: 1, groupCode: 'ISR', groupName: 'ISR', operationFactor: -1,
   normalizedDescription: 'REINTEGRO DE ISR PAGADO EN EXCESO' };
