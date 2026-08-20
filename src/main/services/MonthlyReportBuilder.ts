@@ -3,6 +3,7 @@ import { basename, join } from 'node:path';
 import type Database from 'better-sqlite3';
 import ExcelJS from 'exceljs';
 import { calculateFileSha256 } from './FileHashService.js';
+import { getMonthlyReportDirectory } from './ReportPathService.js';
 
 interface ReconciliationRow { id:number; year:number; month:number; revision:number; total_amount_cents:number; group_code:string; group_name:string }
 type DataRow=Record<string,string|number|null>;
@@ -34,11 +35,11 @@ export class MonthlyReportBuilder {
       ORDER BY pb.fortnight,pt.name,bt.source_key,bt.account_code,bt.concept_name`).all(reconciliationId) as DataRow[];
     const computed=totals.reduce((sum,row)=>sum+Number(row.total_amount_cents),0);
     if(computed!==rec.total_amount_cents) throw new Error(`El reporte mensual no concilia: diferencia ${rec.total_amount_cents-computed} centavos.`);
-    const directory=join(this.outputDirectory,String(rec.year),`M${String(rec.month).padStart(2,'0')}`,rec.group_code); await fs.mkdir(directory,{ recursive:true });
+    const directory=getMonthlyReportDirectory(this.outputDirectory,rec.year,rec.month,rec.group_code); await fs.mkdir(directory,{ recursive:true });
     const path=join(directory,`Totales_${rec.group_code}_${rec.year}_M${String(rec.month).padStart(2,'0')}.xlsx`);
     const temporary=`${path}.tmp-${process.pid}-${Date.now()}.xlsx`; const workbook=new ExcelJS.Workbook(); workbook.creator='SEFIPLAN Nómina';
     this.addSummary(workbook,rec,totals); this.addPayroll(workbook,rec,batches,totals); this.addGrouped(workbook,rec,totals);
-    this.addControl(workbook,rec,batches,computed); this.addRetained(workbook,rec,reconciliationId);
+    this.addRetained(workbook,rec,reconciliationId);
     await workbook.xlsx.writeFile(temporary); try { await fs.rename(temporary,path); }
     catch(error){ await fs.rm(temporary,{ force:true }); throw error; }
     const now=new Date().toISOString(); this.database.prepare(`INSERT INTO report_artifacts(reconciliation_id,report_type,filename,file_path,file_hash_sha256,updated_at)
@@ -94,17 +95,6 @@ export class MonthlyReportBuilder {
       Number(item.operation_factor)===-1?'RESTA':'SUMA',item.record_count,Number(item.original_amount_cents)/100,Number(item.total_amount_cents)/100]);
       row.getCell(8).numFmt=MONEY; row.getCell(9).numFmt=MONEY; borders(row,headers.length); }
     sheet.autoFilter={ from:'A4',to:'I4' }; [12,24,18,34,34,12,14,20,20].forEach((w,i)=>sheet.getColumn(i+1).width=w);
-  }
-
-  private addControl(workbook:ExcelJS.Workbook,rec:ReconciliationRow,batches:DataRow[],computed:number):void{
-    const sheet=workbook.addWorksheet('Control',{ views:[{ state:'frozen',ySplit:8,showGridLines:false }] }); const headers=['Quincena','Tipo','Versión','Archivo','Hash SHA-256','Líneas','Válidas','Excluidas','Inválidas','Total','Procesado'];
-    title(sheet,'Control de archivos activos',`Conciliación: ${(rec.total_amount_cents-computed)/100} · debe ser $0.00`,headers.length);
-    [['Año',rec.year],['Mes',rec.month],['Grupo',rec.group_name],['Revisión',rec.revision],['Diferencia de control',(rec.total_amount_cents-computed)/100]].forEach((v,i)=>{ sheet.getCell(4+i,1).value=v[0];
-      sheet.getCell(4+i,1).font={ bold:true }; sheet.getCell(4+i,2).value=v[1]; if(i===4)sheet.getCell(8,2).numFmt=MONEY; });
-    sheet.getRow(10).values=headers; header(sheet.getRow(10),headers.length);
-    for(const b of batches){ const row=sheet.addRow([`Q${String(b.fortnight).padStart(2,'0')}`,b.payroll_type_name,b.version,b.original_filename,b.file_hash_sha256,
-      b.total_lines,b.valid_lines,b.excluded_lines,b.invalid_lines,Number(b.total_amount_cents)/100,b.completed_at?new Date(String(b.completed_at)):null]); row.getCell(10).numFmt=MONEY; row.getCell(11).numFmt='yyyy-mm-dd hh:mm'; borders(row,headers.length); }
-    sheet.autoFilter={ from:'A10',to:'K10' }; [12,24,10,48,68,12,12,12,12,18,22].forEach((w,i)=>sheet.getColumn(i+1).width=w);
   }
 
   private addRetained(workbook:ExcelJS.Workbook,rec:ReconciliationRow,reconciliationId:number):void{

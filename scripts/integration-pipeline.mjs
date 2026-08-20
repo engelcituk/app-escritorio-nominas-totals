@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { Worker } from 'node:worker_threads';
 import ExcelJS from 'exceljs';
 import { app } from 'electron';
@@ -105,11 +105,15 @@ try {
 
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.readFile(replacement.monthlyReport);
-  const expectedSheets = ['Resumen mensual','Por nómina','Desglose agrupado','Control','Retenidos'];
+  const expectedSheets = ['Resumen mensual','Por nómina','Desglose agrupado','Retenidos'];
   if (workbook.worksheets.map((sheet) => sheet.name).join('|') !== expectedSheets.join('|')) {
     throw new Error(`El workbook mensual no contiene las hojas requeridas: ${workbook.worksheets.map((sheet) => sheet.name).join(', ')}`);
   }
-  if (workbook.getWorksheet('Control')?.getCell('B8').value !== 0) throw new Error('La diferencia de conciliación del workbook no es cero.');
+  const summary = workbook.getWorksheet('Resumen mensual');
+  const exportedMonthlyTotal = Number(summary?.lastRow?.getCell(summary.lastRow.cellCount).value);
+  if (exportedMonthlyTotal !== rec.total_amount_cents / 100) {
+    throw new Error(`El total mensual exportado no concilia: ${exportedMonthlyTotal}.`);
+  }
   const sourceWorkbook = new ExcelJS.Workbook();
   await sourceWorkbook.xlsx.readFile(replacement.sourcePath);
   const source = sourceWorkbook.getWorksheet('Contenido TXT');
@@ -118,13 +122,18 @@ try {
     throw new Error('TXT Completo no presenta Fuente separada del campo técnico de financiamiento.');
   }
   const files = await listFiles(outputDirectory);
-  if (files.some((file) => /Detalle_Conceptos|Totales_Conceptos/.test(file))) {
-    throw new Error('Se generaron reportes individuales que debían retirarse.');
+  const expectedDirectory = join(outputDirectory,'2026','M07','ISR');
+  const xlsxFiles = files.filter((file) => file.endsWith('.xlsx'));
+  if ([first.sourcePath,second.sourcePath,replacement.sourcePath,replacement.monthlyReport].some((file) => dirname(file) !== expectedDirectory)) {
+    throw new Error('Los reportes no quedaron reunidos en la carpeta mensual del grupo.');
+  }
+  if (xlsxFiles.some((file) => !/^(TXT_Completo_|Totales_ISR_)/.test(basename(file)))) {
+    throw new Error(`Se generó un tipo de reporte no solicitado: ${xlsxFiles.map((file) => basename(file)).join(', ')}.`);
   }
   db.close();
   console.log(JSON.stringify({ reconciliationId, activeBatches: active.map((item) => item.id), monthlyTotalCents: rec.total_amount_cents,
     monthlyReport: replacement.monthlyReport, sourceReports: [first.sourcePath, second.sourcePath, replacement.sourcePath],
-    workbookSheets: expectedSheets, controlDifference: 0, failedReplacementPreserved: true, removedIndividualReports: true }));
+    workbookSheets: expectedSheets, exportedMonthlyTotal, failedReplacementPreserved: true, reportTypes: ['TXT_COMPLETO','TOTALES_MENSUALES'] }));
 } finally {
   await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   app.quit();

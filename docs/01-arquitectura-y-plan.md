@@ -57,10 +57,10 @@ Los reintegros usan factor `−1`; nunca se acumulan importes en punto flotante.
 
 ```text
 /{año}/M{mes}/{grupo}/Totales_{grupo}_{año}_M{mes}.xlsx
-/{año}/M{mes}/{grupo}/Q{quincena}/TXT_Completo_...xlsx
+/{año}/M{mes}/{grupo}/TXT_Completo_...xlsx
 ```
 
-El reporte mensual incluye `Resumen mensual`, `Por nómina`, `Desglose agrupado`, `Control` y `Retenidos`. La hoja de control reconcilia contra lotes activos con diferencia cero. No se generan `Detalle_Conceptos` ni `Totales_Conceptos` por archivo, ni versiones históricas del reporte mensual.
+El reporte mensual incluye `Resumen mensual`, `Por nómina`, `Desglose agrupado` y `Retenidos`. La conciliación contra lotes activos se valida internamente con diferencia cero antes de escribir el archivo. No se generan `Detalle_Conceptos`, `Totales_Conceptos` por archivo, `Consolidado_Conceptos` ni versiones históricas del reporte mensual.
 
 ## 6. Riesgos y mitigaciones
 

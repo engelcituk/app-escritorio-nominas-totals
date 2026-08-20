@@ -5,6 +5,7 @@ import ExcelJS from 'exceljs';
 import { UNIFORM_PAYROLL_COLUMNS, UNIFORM_PAYROLL_LAYOUT } from '../../shared/payroll-layouts/uniformPayrollLayout.js';
 import { parseAmountToCents } from '../../shared/utils/money.js';
 import { calculateFileSha256 } from './FileHashService.js';
+import { getMonthlyReportDirectory } from './ReportPathService.js';
 import { TxtStreamParser } from './TxtStreamParser.js';
 
 interface BatchRow {
@@ -33,8 +34,7 @@ export class ExcelReportBuilder {
     if (!batch) throw new Error('No se encontró el lote para generar el TXT completo.');
     const groupCode = (this.database.prepare(`SELECT cg.code FROM monthly_reconciliations mr JOIN concept_groups cg ON cg.id=mr.concept_group_id
       WHERE mr.id=?`).get(batch.reconciliation_id) as { code: string }).code;
-    const directory = join(this.outputDirectory,String(batch.year),`M${String(batch.month).padStart(2,'0')}`,groupCode,
-      `Q${String(batch.fortnight).padStart(2,'0')}`);
+    const directory = getMonthlyReportDirectory(this.outputDirectory,batch.year,batch.month,groupCode);
     await fs.mkdir(directory,{ recursive:true });
     const suffix = `QNA_${String(batch.fortnight).padStart(2,'0')}_${batch.year}_${batch.payroll_type_code}_V${batch.version}_L${batch.id}`;
     const sourcePath = join(directory,`TXT_Completo_${suffix}.xlsx`);

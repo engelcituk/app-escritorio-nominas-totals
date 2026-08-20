@@ -1,16 +1,17 @@
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { getPeriodReportDirectory } from '../../src/main/services/ReportPathService.js';
+import { getMonthlyReportDirectory } from '../../src/main/services/ReportPathService.js';
 
 describe('organización de carpetas de reportes', () => {
-  it('crea una ruta por año y quincena con dos dígitos', () => {
-    expect(getPeriodReportDirectory('C:\\Reportes\\SEFIPLAN_Nomina', 2026, 11))
-      .toBe(join('C:\\Reportes\\SEFIPLAN_Nomina', '2026', 'Q11'));
-    expect(getPeriodReportDirectory('C:\\Reportes\\SEFIPLAN_Nomina', 2026, 1))
-      .toBe(join('C:\\Reportes\\SEFIPLAN_Nomina', '2026', 'Q01'));
+  it('reúne TXT completos y totales en la carpeta mensual del grupo', () => {
+    expect(getMonthlyReportDirectory('C:\\Reportes\\SEFIPLAN_Nomina', 2026, 6, 'ISR'))
+      .toBe(join('C:\\Reportes\\SEFIPLAN_Nomina', '2026', 'M06', 'ISR'));
+    expect(getMonthlyReportDirectory('C:\\Reportes\\SEFIPLAN_Nomina', 2026, 1, 'OTRO_GRUPO'))
+      .toBe(join('C:\\Reportes\\SEFIPLAN_Nomina', '2026', 'M01', 'OTRO_GRUPO'));
   });
 
-  it('rechaza periodos fuera del calendario quincenal', () => {
-    expect(() => getPeriodReportDirectory('C:\\Reportes', 2026, 25)).toThrow('La quincena del reporte no es válida.');
+  it('rechaza periodos y códigos de carpeta inválidos', () => {
+    expect(() => getMonthlyReportDirectory('C:\\Reportes', 2026, 13, 'ISR')).toThrow('El mes del reporte no es válido.');
+    expect(() => getMonthlyReportDirectory('C:\\Reportes', 2026, 6, '..')).toThrow('El grupo de conceptos del reporte no es válido.');
   });
 });

@@ -52,7 +52,7 @@ npm run benchmark:fixture -- 500000
 - El TXT se procesa por streaming: la primera pasada calcula los totales y la segunda genera los Excel.
 - Los importes se almacenan y suman como centavos enteros.
 - SQLite conserva lotes y totales agrupados, pero no persiste cada movimiento de nómina.
-- El workbook mensual documenta cobertura, nóminas, desglose, control y retenidos; la diferencia de conciliación debe ser cero.
+- El workbook mensual contiene resumen, totales por nómina, desglose agrupado y retenidos; la diferencia de conciliación se valida internamente antes de guardarlo.
 - La restauración valida ZIP, manifiesto, versión y esquema, y crea un respaldo automático previo.
 
 ## Estructura confirmada del TXT
