@@ -38,13 +38,13 @@ try {
   if (!previewLayout.previewWidth || previewLayout.previewWidth < previewLayout.cardWidth * 0.9) {
     throw new Error(`La vista previa no ocupa el ancho del archivo: ${JSON.stringify(previewLayout)}`);
   }
-  await window.getByRole('button', { name: /conceptos seleccionados|Seleccionar conceptos|Seleccionar mientras se analiza/ }).click();
+  await window.getByRole('button', { name: /conceptos seleccionados|Elegir conceptos/ }).click();
   await window.getByRole('button', { name: 'Seleccionar visibles', exact: true }).click();
   const measure = () => window.evaluate(() => ({ viewport: document.documentElement.clientWidth, document: document.documentElement.scrollWidth }));
   const wideLayout = await measure(); if (wideLayout.document > wideLayout.viewport) throw new Error(`Desbordamiento: ${JSON.stringify(wideLayout)}`);
   await window.setViewportSize({ width: 1024, height: 768 }); const compactLayout = await measure();
   if (compactLayout.document > compactLayout.viewport) throw new Error(`Desbordamiento compacto: ${JSON.stringify(compactLayout)}`);
-  await window.getByRole('button', { name: 'Carpeta de reportes', exact: true }).click();
+  await window.getByRole('button', { name: 'Abrir carpeta de reportes', exact: true }).click();
   await window.getByRole('button', { name: 'Actualizar expediente', exact: true }).click();
   await window.getByText('Expediente y reporte mensual actualizados.', { exact: true }).waitFor({ timeout: 60000 });
   console.log(JSON.stringify({ preloadReady, selectedFilename, processing: 'completed', monthlyMatrixCollapsed: true,

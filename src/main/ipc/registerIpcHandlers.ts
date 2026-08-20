@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { copyFile, mkdtemp, rm } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { app, dialog, ipcMain, shell, type BrowserWindow } from 'electron';
 import { conceptAliasDraftSchema, conceptGroupDraftSchema, fileTokenSchema, historyQuerySchema, payrollConceptDraftSchema,
@@ -13,6 +13,7 @@ import { BackupService } from '../services/BackupService.js';
 import { ACTIVE_CONCEPT_MATCHERS_SQL, ConceptMatcher, type ConceptMatchRule } from '../services/ConceptMatcher.js';
 import { inspectPayrollFile } from '../services/PreflightService.js';
 import { ProcessingService } from '../services/ProcessingService.js';
+import { getMonthlyReportDirectory } from '../services/ReportPathService.js';
 import { TxtStreamParser } from '../services/TxtStreamParser.js';
 
 const fileTokens = new Map<string, string>(); const directoryTokens = new Map<string, string>();
@@ -83,7 +84,7 @@ export function registerIpcHandlers(windowProvider: () => BrowserWindow | null, 
   ipcMain.handle('history:list', (_event, payload: unknown) => listBatchHistory(databasePath, payload));
   ipcMain.handle('history:monthly', (_event, payload: unknown) => listMonthlyHistory(databasePath, payload));
   ipcMain.handle('report:open-folder', (_event, id: unknown) => openReport(databasePath, 'batch_id', Number(id)));
-  ipcMain.handle('report:open-month-folder', (_event, id: unknown) => openReport(databasePath, 'reconciliation_id', Number(id)));
+  ipcMain.handle('report:open-month-folder', (_event, id: unknown) => openMonthlyReportDirectory(databasePath, Number(id)));
   ipcMain.handle('settings:get', () => { const db = new DatabaseService(databasePath); const rows = db.connection.prepare('SELECT key,value FROM app_settings').all() as Array<{ key: string; value: string }>; db.close(); return Object.fromEntries(rows.map((row) => [row.key, row.value])); });
   ipcMain.handle('settings:update', (_event, payload: unknown) => updateSettings(databasePath, payload));
   ipcMain.handle('backup:create', async () => createBackup(databasePath, windowProvider));
@@ -186,6 +187,14 @@ function mapBatch(r:Record<string,string|number|null>):BatchSummary{return{ id:N
 async function openReport(databasePath:string,column:'batch_id'|'reconciliation_id',id:number):Promise<boolean>{if(!Number.isInteger(id)||id<1)return false;
   const db=new DatabaseService(databasePath);const row=db.connection.prepare(`SELECT file_path FROM report_artifacts WHERE ${column}=? ORDER BY updated_at DESC LIMIT 1`).get(id) as { file_path:string }|undefined;db.close();
   if(!row||!existsSync(row.file_path))return false;return(await shell.openPath(dirname(row.file_path)))==='';}
+async function openMonthlyReportDirectory(databasePath:string,id:number):Promise<boolean>{if(!Number.isInteger(id)||id<1)return false;
+  const db=new DatabaseService(databasePath);try{const artifact=db.connection.prepare(`SELECT file_path FROM report_artifacts WHERE reconciliation_id=? ORDER BY updated_at DESC LIMIT 1`).get(id) as { file_path:string }|undefined;
+    if(artifact&&existsSync(artifact.file_path))return(await shell.openPath(dirname(artifact.file_path)))==='';
+    const period=db.connection.prepare(`SELECT mr.year,mr.month,cg.code group_code FROM monthly_reconciliations mr JOIN concept_groups cg ON cg.id=mr.concept_group_id WHERE mr.id=?`).get(id) as { year:number;month:number;group_code:string }|undefined;
+    if(!period)return false;const setting=db.connection.prepare(`SELECT value FROM app_settings WHERE key='reports_directory'`).get() as { value:string }|undefined;
+    const root=setting?.value??join(app.getPath('documents'),'SEFIPLAN_Nomina');const directory=getMonthlyReportDirectory(root,period.year,period.month,period.group_code);
+    await mkdir(directory,{recursive:true});return(await shell.openPath(directory))==='';
+  }finally{db.close();}}
 function updateSettings(databasePath: string, payload: unknown): void { const allowed = new Set(['minimum_year','maximum_year']); if (!payload || typeof payload !== 'object') throw new Error('La configuración no es válida.');
   const db = new DatabaseService(databasePath); const upsert = db.connection.prepare(`INSERT INTO app_settings(key,value,updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`);
   db.connection.transaction(() => { for (const [key, value] of Object.entries(payload)) { if (key === 'reports_directory_token' && typeof value === 'string') upsert.run('reports_directory', resolveToken(directoryTokens, value, 'Selecciona nuevamente la carpeta de reportes.'), new Date().toISOString());

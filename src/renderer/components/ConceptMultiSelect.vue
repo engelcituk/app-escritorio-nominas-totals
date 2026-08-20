@@ -7,15 +7,17 @@ import MoneyValue from './MoneyValue.vue';
 const props = defineProps<{ modelValue: number[]; options: DetectedConcept[]; filename: string; loading?: boolean; disabled?: boolean }>();
 const emit = defineEmits<{ 'update:modelValue': [number[]]; change: []; create: [DetectedConcept] }>();
 const root = ref<HTMLElement | null>(null); const searchInput = ref<HTMLInputElement | null>(null);
-const inputId = useId(); const listId = useId();
+const inputId = useId(); const listId = useId(); const helperId = useId();
 const open = ref(false); const search = ref('');
 const catalogued = computed(() => props.options.filter((option) => option.catalogConcept));
 const filtered = computed(() => { const query = canonicalizeConceptDescription(search.value); return props.options.filter((option) =>
   !query || canonicalizeConceptDescription(`${option.sourceDescription} ${option.catalogConcept?.name ?? ''} ${option.catalogConcept?.groupName ?? ''}`).includes(query)); });
 const selectedOptions = computed(() => { const ids = new Set<number>(); return catalogued.value.filter((option) => {
   const id = option.catalogConcept!.id; if (!props.modelValue.includes(id) || ids.has(id)) return false; ids.add(id); return true; }); });
-const summary = computed(() => props.modelValue.length ? `${props.modelValue.length} conceptos seleccionados`
-  : props.loading ? 'Seleccionar mientras se analiza' : 'Seleccionar conceptos');
+const summary = computed(() => props.modelValue.length ? `${props.modelValue.length} conceptos seleccionados` : 'Elegir conceptos');
+const helper = computed(() => props.loading
+  ? 'El selector está disponible; los conteos se actualizarán automáticamente.'
+  : `${props.options.length} conceptos detectados en ${props.filename}`);
 
 async function toggle(): Promise<void> { if (props.disabled) return; open.value = !open.value; if (open.value) { await nextTick(); searchInput.value?.focus(); } }
 function update(id: number, selected: boolean): void { const next = selected ? [...new Set([...props.modelValue, id])] : props.modelValue.filter((value) => value !== id);
@@ -36,13 +38,22 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', clickOutside));
         <button type="button" :aria-label="`Quitar ${option.catalogConcept!.name}`" @click="update(option.catalogConcept!.id, false)"><i class="bi bi-x" aria-hidden="true" /></button>
       </span>
     </div>
-    <button class="concept-multiselect__trigger" type="button" :aria-expanded="open" :aria-controls="listId" :aria-busy="loading" :disabled="disabled" @click="toggle">
-      <span><strong>{{ summary }}</strong><small>{{ loading ? `Catálogo disponible; actualizando coincidencias de ${filename}` : `${options.length} detectados en ${filename}` }}</small></span>
-      <span v-if="loading" class="spinner-border spinner-border-sm" aria-hidden="true" />
-      <i v-else class="bi" :class="open ? 'bi-chevron-up' : 'bi-chevron-down'" aria-hidden="true" />
+    <button class="concept-multiselect__trigger" type="button" :aria-expanded="open" :aria-controls="listId" :aria-describedby="helperId" :disabled="disabled" @click="toggle">
+      <span class="concept-multiselect__trigger-icon"><i class="bi bi-list-check" aria-hidden="true" /></span>
+      <span class="concept-multiselect__trigger-copy">
+        <strong>{{ summary }}</strong>
+        <small :id="helperId" aria-live="polite">{{ helper }}</small>
+      </span>
+      <span class="concept-multiselect__trigger-action">
+        <span>{{ open ? 'Cerrar lista' : 'Abrir lista' }}</span>
+        <i class="bi" :class="open ? 'bi-chevron-up' : 'bi-chevron-down'" aria-hidden="true" />
+      </span>
     </button>
     <div v-if="open" class="concept-multiselect__panel">
-      <div v-if="loading" class="concept-multiselect__loading" role="status"><span class="spinner-border spinner-border-sm" aria-hidden="true" /> Puedes seleccionar conceptos ahora; los conteos se completarán al terminar el análisis.</div>
+      <div v-if="loading" class="concept-multiselect__analysis-note" role="status">
+        <i class="bi bi-info-circle" aria-hidden="true" />
+        Puedes elegir conceptos ahora. Los conteos e importes se completarán automáticamente.
+      </div>
       <div class="concept-multiselect__toolbar">
         <label class="visually-hidden" :for="inputId">Buscar conceptos detectados</label>
         <div class="input-group"><span class="input-group-text"><i class="bi bi-search" aria-hidden="true" /></span><input :id="inputId" ref="searchInput" v-model="search" class="form-control" placeholder="Buscar por concepto o grupo" /></div>
@@ -57,7 +68,7 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', clickOutside));
             <span><strong>{{ option.catalogConcept.name }}</strong><small>{{ option.sourceDescription }}</small></span>
           </label>
           <div v-else class="concept-multiselect__unknown"><span><span class="badge text-bg-warning">Sin catalogar</span><strong>{{ option.sourceDescription }}</strong></span><button class="btn btn-outline-primary btn-sm" type="button" @click="$emit('create', option)">Dar de alta</button></div>
-          <div class="concept-multiselect__meta"><span>{{ loading && !option.recordCount ? 'Conteo pendiente' : `${option.recordCount.toLocaleString('es-MX')} registros` }}</span><MoneyValue v-if="!loading || option.recordCount" :cents="option.originalAmountCents" /><span v-if="option.catalogConcept">{{ option.catalogConcept.groupName || 'Sin grupo' }} · {{ option.catalogConcept.operationFactor === -1 ? 'Resta' : 'Suma' }}</span></div>
+          <div class="concept-multiselect__meta"><span>{{ loading && !option.recordCount ? 'Disponible para seleccionar' : `${option.recordCount.toLocaleString('es-MX')} registros` }}</span><MoneyValue v-if="!loading || option.recordCount" :cents="option.originalAmountCents" /><span v-if="option.catalogConcept">{{ option.catalogConcept.groupName || 'Sin grupo' }} · {{ option.catalogConcept.operationFactor === -1 ? 'Resta' : 'Suma' }}</span></div>
         </div>
       </div>
     </div>
