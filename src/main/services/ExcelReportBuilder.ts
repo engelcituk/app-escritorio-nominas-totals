@@ -13,6 +13,13 @@ interface BatchRow {
   payroll_type_code: string; original_filename: string; file_hash_sha256: string; layout_code: string; layout_version: number; version: number;
 }
 
+type SourceReportIdentity = Pick<BatchRow, 'fortnight' | 'year' | 'payroll_type_code' | 'version' | 'layout_version'>;
+
+export function getSourceReportFilename(batch: SourceReportIdentity): string {
+  const suffix = `QNA_${String(batch.fortnight).padStart(2,'0')}_${batch.year}_${batch.payroll_type_code}_V${batch.version}_L${batch.layout_version}`;
+  return `TXT_Completo_${suffix}.xlsx`;
+}
+
 const HEADER_FILL = 'FF5E1128';
 const BORDER_COLOR = 'FFD8DDE5';
 const MAX_DATA_ROWS_PER_SHEET = 1_048_575;
@@ -36,8 +43,8 @@ export class ExcelReportBuilder {
       WHERE mr.id=?`).get(batch.reconciliation_id) as { code: string }).code;
     const directory = getMonthlyReportDirectory(this.outputDirectory,batch.year,batch.month,groupCode);
     await fs.mkdir(directory,{ recursive:true });
-    const suffix = `QNA_${String(batch.fortnight).padStart(2,'0')}_${batch.year}_${batch.payroll_type_code}_V${batch.version}_L${batch.id}`;
-    const sourcePath = join(directory,`TXT_Completo_${suffix}.xlsx`);
+    const filename = getSourceReportFilename(batch);
+    const sourcePath = join(directory,filename);
     const workbook = new ExcelJS.stream.xlsx.WorkbookWriter({ filename:sourcePath,useStyles:true,useSharedStrings:true });
     let sheetIndex=1; let rowCount=0; let issueCount=0; let sheet=this.addDataSheet(workbook,'Contenido TXT');
     const issues=workbook.addWorksheet('Líneas no compatibles',{ views:[{ state:'frozen',ySplit:1 }] });
@@ -59,6 +66,7 @@ export class ExcelReportBuilder {
       row.getCell(1).fill={ type:'pattern',pattern:'solid',fgColor:{ argb:'FFF3F4F6' } }; for (const cell of [row.getCell(1),row.getCell(2)])
         cell.border={ bottom:{ style:'thin',color:{ argb:BORDER_COLOR } } }; if (values[0]==='Fecha de proceso') row.getCell(2).numFmt='yyyy-mm-dd hh:mm:ss'; row.commit(); }
     metadata.commit(); await workbook.commit();
+    await this.removeObsoleteLayoutArtifacts(directory,filename);
     const now=new Date().toISOString(); this.database.prepare(`INSERT INTO report_artifacts(batch_id,report_type,filename,file_path,file_hash_sha256,updated_at)
       VALUES (?,'SOURCE',?,?,?,?) ON CONFLICT(batch_id,report_type) WHERE batch_id IS NOT NULL DO UPDATE SET filename=excluded.filename,
       file_path=excluded.file_path,file_hash_sha256=excluded.file_hash_sha256,updated_at=excluded.updated_at`)
@@ -70,5 +78,14 @@ export class ExcelReportBuilder {
     const sheet=workbook.addWorksheet(name,{ views:[{ state:'frozen',ySplit:1 }] });
     sheet.columns=UNIFORM_PAYROLL_COLUMNS.map(({ header,width })=>({ header,width })); sheet.autoFilter={ from:'A1',to:'V1' };
     styleHeader(sheet.getRow(1),UNIFORM_PAYROLL_COLUMNS.length); sheet.getRow(1).commit(); return sheet;
+  }
+
+  private async removeObsoleteLayoutArtifacts(directory:string,currentFilename:string):Promise<void> {
+    const layoutMarker=currentFilename.lastIndexOf('_L');
+    if(layoutMarker<0)return;
+    const prefix=currentFilename.slice(0,layoutMarker+2);
+    const entries=await fs.readdir(directory);
+    await Promise.all(entries.filter((name)=>name!==currentFilename&&name.startsWith(prefix)&&name.endsWith('.xlsx'))
+      .map((name)=>fs.rm(join(directory,name),{ force:true }).catch(()=>undefined)));
   }
 }

@@ -118,8 +118,12 @@ try {
   await sourceWorkbook.xlsx.readFile(replacement.sourcePath);
   const source = sourceWorkbook.getWorksheet('Contenido TXT');
   if (source?.getCell('I1').value !== 'Fuente' || source.getCell('I2').value !== '1508-26-001'
+    || source.getCell('J1').value !== 'Número de empleado' || source.getCell('J2').value !== '1001'
     || source.getCell('U1').value !== 'Fuente de financiamiento' || source.getCell('V1').value !== 'Centro de pago') {
     throw new Error('TXT Completo no presenta Fuente separada del campo técnico de financiamiento.');
+  }
+  if (![first.sourcePath, second.sourcePath, replacement.sourcePath].every((path) => /_L1\.xlsx$/.test(path))) {
+    throw new Error('El nombre del TXT Completo no identifica correctamente la versión del layout.');
   }
   const files = await listFiles(outputDirectory);
   const expectedDirectory = join(outputDirectory,'2026','M07','ISR');
