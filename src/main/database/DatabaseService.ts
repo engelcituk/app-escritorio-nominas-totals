@@ -168,7 +168,7 @@ export class DatabaseService {
 
   private validateSchema(): void {
     const required = ['concept_groups', 'payroll_concepts', 'concept_aliases', 'payroll_types', 'monthly_reconciliations',
-      'payroll_batches', 'batch_concept_snapshots', 'batch_retained_employees', 'batch_totals', 'report_artifacts'];
+      'payroll_batches', 'batch_concept_snapshots', 'batch_retained_employees', 'batch_retained_totals', 'batch_totals', 'report_artifacts'];
     const tables = new Set((this.connection.prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`).all() as Array<{ name: string }>).map((row) => row.name));
     if (required.some((name) => !tables.has(name))) throw new IncompatibleSchemaError();
     const requiredColumns: Record<string, string[]> = {
@@ -177,6 +177,7 @@ export class DatabaseService {
       payroll_concepts: ['code', 'group_id', 'operation_factor', 'active'],
       concept_aliases: ['concept_id', 'normalized_description', 'active'],
       batch_retained_employees: ['batch_id', 'employee_number', 'missing_acknowledged'],
+      batch_retained_totals: ['batch_id', 'employee_number', 'source_key', 'account_code', 'concept_name', 'record_count', 'amount_cents'],
       batch_totals: ['batch_id', 'source_key', 'account_code', 'total_amount_cents'],
     };
     for (const [table, columns] of Object.entries(requiredColumns)) {

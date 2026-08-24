@@ -62,6 +62,13 @@ export const MIGRATIONS: readonly Migration[] = [{
       excluded_records INTEGER NOT NULL DEFAULT 0, missing_acknowledged INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL, UNIQUE(batch_id,employee_number)
     );
+    CREATE TABLE IF NOT EXISTS batch_retained_totals (
+      id INTEGER PRIMARY KEY, batch_id INTEGER NOT NULL REFERENCES payroll_batches(id) ON DELETE CASCADE,
+      employee_number TEXT NOT NULL, employee_name TEXT NOT NULL, source_payroll_code TEXT NOT NULL,
+      concept_name TEXT NOT NULL, source_key TEXT NOT NULL, account_code TEXT NOT NULL, movement_type TEXT NOT NULL,
+      record_count INTEGER NOT NULL, amount_cents INTEGER NOT NULL, created_at TEXT NOT NULL,
+      UNIQUE(batch_id,employee_number,source_payroll_code,concept_name,source_key,account_code,movement_type)
+    );
     CREATE TABLE IF NOT EXISTS batch_totals (
       id INTEGER PRIMARY KEY, batch_id INTEGER NOT NULL REFERENCES payroll_batches(id) ON DELETE CASCADE,
       source_concept_id INTEGER NOT NULL, concept_code TEXT NOT NULL, concept_name TEXT NOT NULL, group_code TEXT, group_name TEXT,
@@ -87,5 +94,6 @@ export const MIGRATIONS: readonly Migration[] = [{
     CREATE INDEX IF NOT EXISTS idx_batches_month ON payroll_batches(reconciliation_id,fortnight,payroll_type_id,is_active);
     CREATE INDEX IF NOT EXISTS idx_batches_hash ON payroll_batches(file_hash_sha256);
     CREATE INDEX IF NOT EXISTS idx_totals_batch ON batch_totals(batch_id,source_concept_id,source_key,account_code);
+    CREATE INDEX IF NOT EXISTS idx_retained_totals_batch ON batch_retained_totals(batch_id,source_key,account_code,concept_name);
   `,
 }] as const;

@@ -21,16 +21,16 @@ export class PayrollRecordEvaluator {
     let exclusionCategory: PayrollRecordEvaluation['exclusionCategory'] = null;
     let exclusionReason: string | null = null;
 
-    if (amountCents === null || !record.conceptCode || !record.movementType) {
+    if (this.retainedEmployeeNumbers.has(record.employeeNumber)) {
+      status = RecordStatus.EXCLUDED; exclusionCategory = 'RETAINED';
+      exclusionReason = `Empleado ${record.employeeNumber} retenido para este archivo.`;
+    } else if (amountCents === null || !record.conceptCode || !record.movementType) {
       status = RecordStatus.INVALID;
       validationError = amountCents === null ? 'El importe no es válido.' : 'Falta el código de concepto o el tipo de movimiento.';
     } else if (!classification.matched) status = RecordStatus.UNCLASSIFIED;
     else if (!classification.conceptId || !this.selectedConceptIds.has(classification.conceptId)) {
       status = RecordStatus.EXCLUDED; exclusionCategory = 'CONCEPT_NOT_SELECTED';
       exclusionReason = `El concepto ${classification.conceptName ?? classification.normalized} no fue seleccionado.`;
-    } else if (this.retainedEmployeeNumbers.has(record.employeeNumber)) {
-      status = RecordStatus.EXCLUDED; exclusionCategory = 'RETAINED';
-      exclusionReason = `Empleado ${record.employeeNumber} retenido para este archivo.`;
     } else if (!record.accountCode) {
       status = RecordStatus.INVALID; validationError = 'Falta la cuenta contable en un movimiento seleccionado.';
     } else status = RecordStatus.VALID;

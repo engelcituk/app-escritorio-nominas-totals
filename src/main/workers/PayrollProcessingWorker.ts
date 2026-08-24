@@ -9,6 +9,7 @@ import { DatabaseService } from '../database/DatabaseService.js';
 import { ACTIVE_CONCEPT_MATCHERS_SQL, ConceptMatcher, type ConceptMatchRule } from '../services/ConceptMatcher.js';
 import { calculateFileSha256 } from '../services/FileHashService.js';
 import { PayrollRecordEvaluator } from '../services/PayrollRecordEvaluator.js';
+import { RetainedTotalsService, type RetainedTotalInput } from '../services/RetainedTotalsService.js';
 import { TotalsService, type BatchTotalInput } from '../services/TotalsService.js';
 import { TxtStreamParser } from '../services/TxtStreamParser.js';
 
@@ -38,6 +39,7 @@ async function run(): Promise<void> {
   const totalBytes = statSync(payload.filePath).size; const started = Date.now();
   const counters: Counters = { total: 0, valid: 0, excluded: 0, invalid: 0, unclassified: 0, matched: 0 };
   const totalsByGroup = new Map<string, BatchTotalInput>();
+  const retainedTotalsByGroup = new Map<string, RetainedTotalInput>();
   const retainedStats = new Map<string, { name: string; found: number; excluded: number }>();
   const retainedSet = new Set(payload.retainedEmployeeNumbers); const selected = new Set(payload.selectedConceptIds);
   let recordsTotal = 0; let batchId: number | null = null; let bytesProcessed = 0;
@@ -86,10 +88,18 @@ async function run(): Promise<void> {
       else {
         const evaluation = evaluator.evaluate(item.record);
         if (evaluation.classification.matched) counters.matched += 1;
-        if (retainedSet.has(item.record.employeeNumber) && evaluation.classification.conceptId && selected.has(evaluation.classification.conceptId)) {
+        if (retainedSet.has(item.record.employeeNumber)) {
           const stat = retainedStats.get(item.record.employeeNumber) ?? { name: item.record.employeeName, found: 0, excluded: 0 };
           stat.name ||= item.record.employeeName; stat.found += 1;
           if (evaluation.exclusionCategory === 'RETAINED') stat.excluded += 1; retainedStats.set(item.record.employeeNumber, stat);
+          const retained:RetainedTotalInput={ employeeNumber:item.record.employeeNumber,employeeName:item.record.employeeName,
+            sourcePayrollCode:item.record.conceptCode,conceptName:evaluation.classification.conceptName??item.record.conceptDescriptionOriginal.trim(),
+            sourceKey:item.record.sourceKey,accountCode:item.record.accountCode,movementType:item.record.movementType,recordCount:1,
+            amountCents:evaluation.amountCents??0 };
+          const retainedKey=JSON.stringify([retained.employeeNumber,retained.sourcePayrollCode,retained.conceptName,retained.sourceKey,
+            retained.accountCode,retained.movementType]); const accumulatedRetained=retainedTotalsByGroup.get(retainedKey);
+          if(accumulatedRetained){accumulatedRetained.recordCount+=1;accumulatedRetained.amountCents+=retained.amountCents;}
+          else retainedTotalsByGroup.set(retainedKey,retained);
         }
         switch (evaluation.status) {
           case RecordStatus.INVALID: counters.invalid += 1; break;
@@ -120,6 +130,7 @@ async function run(): Promise<void> {
 
     emitProgress(Stage.CALCULATING, counters, totalBytes, started, totalBytes);
     const totals = new TotalsService(db).persist(batchId, totalsByGroup.values(), recordsTotal);
+    new RetainedTotalsService(db).persist(batchId,retainedTotalsByGroup.values());
     const status = totals.difference === 0 ? BatchStatus.PROCESSING : BatchStatus.FAILED_RECONCILIATION;
     db.prepare(`UPDATE payroll_batches SET status=?, total_lines=?, valid_lines=?, excluded_lines=?, invalid_lines=?, unclassified_lines=?,
       matching_lines=?, total_amount_cents=?, updated_at=? WHERE id=?`).run(status, counters.total, counters.valid, counters.excluded,

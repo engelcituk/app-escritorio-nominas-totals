@@ -9,6 +9,7 @@ describe('layout uniforme', () => {
     expect(UNIFORM_PAYROLL_COLUMNS[4]?.header).toBe('Dato de nómina 1');
     expect(UNIFORM_PAYROLL_COLUMNS[8]?.header).toBe('Fuente');
     expect(UNIFORM_PAYROLL_COLUMNS[9]?.header).toBe('Número de empleado');
+    expect(UNIFORM_PAYROLL_COLUMNS[10]?.header).toBe('Número de plaza');
     expect(UNIFORM_PAYROLL_COLUMNS[11]?.header).toBe('Nombre del empleado');
     expect(UNIFORM_PAYROLL_COLUMNS[20]?.header).toBe('Fuente de financiamiento');
     expect(UNIFORM_PAYROLL_COLUMNS[21]?.header).toBe('Centro de pago');

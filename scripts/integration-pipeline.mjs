@@ -49,7 +49,7 @@ try {
   const first = await processBatch({ databasePath, outputDirectory, reconciliationId, filePath: q13Path, fortnight: 13,
     payrollTypeId: typeId('SUELDOS'), selectedConceptIds: [concept.id], retainedEmployeeNumbers: ['1001'], replaceActiveBatch: false });
   const second = await processBatch({ databasePath, outputDirectory, reconciliationId, filePath: q14Path, fortnight: 14,
-    payrollTypeId: typeId('HONORARIOS'), selectedConceptIds: [concept.id], retainedEmployeeNumbers: [], replaceActiveBatch: false });
+    payrollTypeId: typeId('HONORARIOS'), selectedConceptIds: [concept.id], retainedEmployeeNumbers: ['1001'], replaceActiveBatch: false });
   if (first.monthlyReport !== second.monthlyReport) throw new Error('La segunda quincena no actualizó la misma ruta mensual.');
   const replacement = await processBatch({ databasePath, outputDirectory, reconciliationId, filePath: q13ReplacementPath, fortnight: 13,
     payrollTypeId: typeId('SUELDOS'), selectedConceptIds: [concept.id], retainedEmployeeNumbers: [], replaceActiveBatch: true });
@@ -80,13 +80,19 @@ try {
     throw new Error(`La matriz activa no conserva una versión por quincena y tipo: ${JSON.stringify(active)}`);
   }
   if (old.status !== 'SUPERSEDED' || old.is_active !== 0) throw new Error('La versión anterior no quedó sustituida.');
-  if (rec.total_amount_cents !== totalFromActive || rec.total_amount_cents !== 409110) {
+  if (rec.total_amount_cents !== totalFromActive || rec.total_amount_cents !== 330090) {
     throw new Error(`El total mensual no concilia contra lotes activos: ${JSON.stringify({ rec: rec.total_amount_cents, totalFromActive })}`);
   }
   const retainedByBatch = db.connection.prepare(`SELECT batch_id,employee_number,found_records,excluded_records
     FROM batch_retained_employees ORDER BY batch_id`).all();
-  if (retainedByBatch.length !== 1 || retainedByBatch[0].batch_id !== first.batchId || retainedByBatch[0].excluded_records !== 1) {
+  if (retainedByBatch.length !== 2 || retainedByBatch.some((item) => item.found_records !== 2 || item.excluded_records !== 2)) {
     throw new Error('Los retenidos no se conservaron de forma independiente por TXT.');
+  }
+  const activeRetained = db.connection.prepare(`SELECT SUM(rt.record_count) records,SUM(rt.amount_cents) amount
+    FROM batch_retained_totals rt JOIN payroll_batches pb ON pb.id=rt.batch_id
+    WHERE pb.reconciliation_id=? AND pb.is_active=1 AND pb.status='COMPLETED'`).get(reconciliationId);
+  if (activeRetained.records !== 2 || activeRetained.amount !== 379020) {
+    throw new Error(`El resumen de retenidos volvió a filtrar conceptos: ${JSON.stringify(activeRetained)}`);
   }
   const monthlyArtifacts = db.connection.prepare(`SELECT * FROM report_artifacts WHERE reconciliation_id=? AND report_type='MONTHLY_TOTALS'`).all(reconciliationId);
   if (monthlyArtifacts.length !== 1 || monthlyArtifacts[0].file_path !== replacement.monthlyReport
@@ -105,7 +111,7 @@ try {
 
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.readFile(replacement.monthlyReport);
-  const expectedSheets = ['Resumen mensual','Por nómina','Desglose agrupado','Retenidos'];
+  const expectedSheets = ['Resumen mensual','Por nómina','Desglose agrupado','Resumen retenidos','Retenidos'];
   if (workbook.worksheets.map((sheet) => sheet.name).join('|') !== expectedSheets.join('|')) {
     throw new Error(`El workbook mensual no contiene las hojas requeridas: ${workbook.worksheets.map((sheet) => sheet.name).join(', ')}`);
   }
@@ -114,11 +120,22 @@ try {
   if (exportedMonthlyTotal !== rec.total_amount_cents / 100) {
     throw new Error(`El total mensual exportado no concilia: ${exportedMonthlyTotal}.`);
   }
+  const retainedSummary = workbook.getWorksheet('Resumen retenidos');
+  const exportedRetainedTotal = Number(retainedSummary?.lastRow?.getCell(retainedSummary.lastRow.cellCount).value);
+  if (exportedRetainedTotal !== activeRetained.amount / 100) {
+    throw new Error(`El total retenido exportado no concilia: ${exportedRetainedTotal}.`);
+  }
+  const retainedDetail = workbook.getWorksheet('Retenidos');
+  if (retainedDetail?.getCell('F4').value !== 'Movimientos retenidos' || retainedDetail.getCell('F5').value !== 2
+    || retainedDetail.getCell('G4').value || retainedDetail.getCell('H4').value) {
+    throw new Error('La hoja Retenidos no presenta el detalle simplificado solicitado.');
+  }
   const sourceWorkbook = new ExcelJS.Workbook();
   await sourceWorkbook.xlsx.readFile(replacement.sourcePath);
   const source = sourceWorkbook.getWorksheet('Contenido TXT');
   if (source?.getCell('I1').value !== 'Fuente' || source.getCell('I2').value !== '1508-26-001'
     || source.getCell('J1').value !== 'Número de empleado' || source.getCell('J2').value !== '1001'
+    || source.getCell('K1').value !== 'Número de plaza'
     || source.getCell('U1').value !== 'Fuente de financiamiento' || source.getCell('V1').value !== 'Centro de pago') {
     throw new Error('TXT Completo no presenta Fuente separada del campo técnico de financiamiento.');
   }

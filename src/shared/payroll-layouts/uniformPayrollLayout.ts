@@ -34,7 +34,7 @@ export const UNIFORM_PAYROLL_COLUMNS = [
   { header: 'Código de adscripción', width: 22 },
   { header: 'Fuente', width: 22 },
   { header: 'Número de empleado', width: 20 },
-  { header: 'Dato de plaza 2', width: 18 },
+  { header: 'Número de plaza', width: 18 },
   { header: 'Nombre del empleado', width: 38 },
   { header: 'Nombre del puesto', width: 36 },
   { header: 'Código tabular', width: 18 },

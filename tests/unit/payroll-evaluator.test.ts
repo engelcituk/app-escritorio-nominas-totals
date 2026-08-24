@@ -32,6 +32,18 @@ describe('evaluación firmada de ISR', () => {
     expect(result.exclusionCategory).toBe('RETAINED');
   });
 
+  it('retiene al empleado aunque el concepto no esté seleccionado', () => {
+    const result = new PayrollRecordEvaluator(new ConceptMatcher([rule]), new Set(), new Set(['0007'])).evaluate(record);
+    expect(result.status).toBe(RecordStatus.EXCLUDED);
+    expect(result.exclusionCategory).toBe('RETAINED');
+  });
+
+  it('retiene al empleado aunque el concepto no esté clasificado', () => {
+    const result = new PayrollRecordEvaluator(new ConceptMatcher([]), new Set(), new Set(['0007'])).evaluate(record);
+    expect(result.status).toBe(RecordStatus.EXCLUDED);
+    expect(result.exclusionCategory).toBe('RETAINED');
+  });
+
   it('no reconoce descripciones por coincidencias parciales', () => {
     expect(new ConceptMatcher([{ ...rule, normalizedDescription: 'ISR' }]).classify(record).matched).toBe(false);
   });

@@ -33,13 +33,17 @@ export class MonthlyReportBuilder {
       JOIN payroll_batches pb ON pb.id=bt.batch_id JOIN payroll_types pt ON pt.id=pb.payroll_type_id
       WHERE pb.reconciliation_id=? AND pb.is_active=1 AND pb.status='COMPLETED'
       ORDER BY pb.fortnight,pt.name,bt.source_key,bt.account_code,bt.concept_name`).all(reconciliationId) as DataRow[];
+    const retainedTotals=this.database.prepare(`SELECT pb.fortnight,pt.code payroll_type_code,pt.name payroll_type_name,rt.*
+      FROM batch_retained_totals rt JOIN payroll_batches pb ON pb.id=rt.batch_id JOIN payroll_types pt ON pt.id=pb.payroll_type_id
+      WHERE pb.reconciliation_id=? AND pb.is_active=1 AND pb.status='COMPLETED'
+      ORDER BY pb.fortnight,pt.name,rt.source_key,rt.account_code,rt.concept_name,rt.employee_number`).all(reconciliationId) as DataRow[];
     const computed=totals.reduce((sum,row)=>sum+Number(row.total_amount_cents),0);
     if(computed!==rec.total_amount_cents) throw new Error(`El reporte mensual no concilia: diferencia ${rec.total_amount_cents-computed} centavos.`);
     const directory=getMonthlyReportDirectory(this.outputDirectory,rec.year,rec.month,rec.group_code); await fs.mkdir(directory,{ recursive:true });
     const path=join(directory,`Totales_${rec.group_code}_${rec.year}_M${String(rec.month).padStart(2,'0')}.xlsx`);
     const temporary=`${path}.tmp-${process.pid}-${Date.now()}.xlsx`; const workbook=new ExcelJS.Workbook(); workbook.creator='SEFIPLAN Nómina';
     this.addSummary(workbook,rec,totals); this.addPayroll(workbook,rec,batches,totals); this.addGrouped(workbook,rec,totals);
-    this.addRetained(workbook,rec,reconciliationId);
+    this.addRetainedSummary(workbook,rec,retainedTotals); this.addRetained(workbook,rec,reconciliationId);
     await workbook.xlsx.writeFile(temporary); try { await fs.rename(temporary,path); }
     catch(error){ await fs.rm(temporary,{ force:true }); throw error; }
     const now=new Date().toISOString(); this.database.prepare(`INSERT INTO report_artifacts(reconciliation_id,report_type,filename,file_path,file_hash_sha256,updated_at)
@@ -50,7 +54,7 @@ export class MonthlyReportBuilder {
 
   private addSummary(workbook:ExcelJS.Workbook,rec:ReconciliationRow,totals:DataRow[]):void{
     const concepts=[...new Set(totals.map((row)=>String(row.concept_name)))].sort((a,b)=>a.localeCompare(b,'es'));
-    const q1=rec.month*2-1; const q2=rec.month*2; const last=2+concepts.length+3;
+    const q1=rec.month*2-1; const q2=rec.month*2; const last=Math.max(8,2+concepts.length+3);
     const sheet=workbook.addWorksheet('Resumen mensual',{ views:[{ state:'frozen',ySplit:8,xSplit:2,showGridLines:false }] }); title(sheet,
       `Conciliación mensual de ${rec.group_name}`,`${rec.year} · Mes ${String(rec.month).padStart(2,'0')} · Revisión ${rec.revision}`,last);
     const additions=totals.filter((r)=>Number(r.operation_factor)===1).reduce((s,r)=>s+Number(r.total_amount_cents),0);
@@ -69,13 +73,45 @@ export class MonthlyReportBuilder {
     for(const item of [...grouped.values()].sort((a,b)=>a.source.localeCompare(b.source)||a.account.localeCompare(b.account))){
       const row=sheet.addRow([item.source,item.account,...concepts.map(c=>(item.concepts.get(c)??0)/100),item.q1/100,item.q2/100,item.total/100]);
       for(let c=3;c<=headers.length;c+=1)row.getCell(c).numFmt=MONEY; borders(row,headers.length); }
-    const totalRow=sheet.addRow(['TOTAL MENSUAL','',...concepts.map(c=>totals.filter(r=>String(r.concept_name)===c).reduce((s,r)=>s+Number(r.total_amount_cents),0)/100),
+    const totalRow=sheet.addRow(['TOTAL MENSUAL',null,...concepts.map(c=>totals.filter(r=>String(r.concept_name)===c).reduce((s,r)=>s+Number(r.total_amount_cents),0)/100),
       totals.filter(r=>Number(r.fortnight)===q1).reduce((s,r)=>s+Number(r.total_amount_cents),0)/100,
       totals.filter(r=>Number(r.fortnight)===q2).reduce((s,r)=>s+Number(r.total_amount_cents),0)/100,rec.total_amount_cents/100]);
-    totalRow.font={ bold:true,color:{ argb:'FFFFFFFF' } }; totalRow.fill={ type:'pattern',pattern:'solid',fgColor:{ argb:RED } };
-    for(let c=3;c<=headers.length;c+=1)totalRow.getCell(c).numFmt=MONEY;
+    for(let c=1;c<=headers.length;c+=1){const cell=totalRow.getCell(c);cell.font={ bold:true,color:{ argb:'FFFFFFFF' } };
+      cell.fill={ type:'pattern',pattern:'solid',fgColor:{ argb:RED } };if(c>=3)cell.numFmt=MONEY;}
     sheet.autoFilter={ from:{ row:start,column:1 },to:{ row:start,column:headers.length } }; sheet.getColumn(1).width=18; sheet.getColumn(2).width=34;
     for(let c=3;c<=headers.length;c+=1)sheet.getColumn(c).width=19;
+  }
+
+  private addRetainedSummary(workbook:ExcelJS.Workbook,rec:ReconciliationRow,totals:DataRow[]):void{
+    const concepts=[...new Set(totals.map((row)=>String(row.concept_name||'SIN CONCEPTO')))].sort((a,b)=>a.localeCompare(b,'es'));
+    const q1=rec.month*2-1; const q2=rec.month*2; const last=Math.max(8,2+concepts.length+3);
+    const sheet=workbook.addWorksheet('Resumen retenidos',{ views:[{ state:'frozen',ySplit:8,xSplit:2,showGridLines:false }] });
+    title(sheet,'Resumen mensual de retenidos',`${rec.year} · Mes ${String(rec.month).padStart(2,'0')} · Importes informativos excluidos del cálculo`,last);
+    const totalAmount=totals.reduce((sum,row)=>sum+Number(row.amount_cents),0);
+    const indicators:Array<[string,number]>=[['Total retenido',totalAmount/100],['Movimientos retenidos',totals.reduce((sum,row)=>sum+Number(row.record_count),0)],
+      ['Empleados retenidos',new Set(totals.map(row=>`${row.batch_id}:${row.employee_number}`)).size],['Archivos con retenidos',new Set(totals.map(row=>row.batch_id)).size]];
+    indicators.forEach(([label,value],index)=>{const col=index*2+1;sheet.mergeCells(4,col,4,col+1);sheet.getCell(4,col).value=label;
+      sheet.getCell(4,col).font={ bold:true,color:{ argb:'FF475467' } };sheet.mergeCells(5,col,5,col+1);const cell=sheet.getCell(5,col);
+      cell.value=value;cell.font={ bold:true,size:14,color:{ argb:index===0?RED:'FF101828' } };
+      cell.fill={ type:'pattern',pattern:'solid',fgColor:{ argb:index===0?'FFFFF1F3':PALE } };if(index===0)cell.numFmt=MONEY;});
+    const headers=['Fuente','Cuenta contable',...concepts,`Q${String(q1).padStart(2,'0')}`,`Q${String(q2).padStart(2,'0')}`,'Total retenido'];
+    const start=8;sheet.getRow(start).values=headers;header(sheet.getRow(start),headers.length);
+    const grouped=new Map<string,{source:string;account:string;concepts:Map<string,number>;q1:number;q2:number;total:number}>();
+    for(const row of totals){const source=String(row.source_key||'SIN FUENTE');const account=String(row.account_code||'SIN CUENTA');const key=`${source}\u0000${account}`;
+      const item=grouped.get(key)??{source,account,concepts:new Map(),q1:0,q2:0,total:0};const amount=Number(row.amount_cents);const concept=String(row.concept_name||'SIN CONCEPTO');
+      item.concepts.set(concept,(item.concepts.get(concept)??0)+amount);if(Number(row.fortnight)===q1)item.q1+=amount;else if(Number(row.fortnight)===q2)item.q2+=amount;
+      item.total+=amount;grouped.set(key,item);}
+    for(const item of [...grouped.values()].sort((a,b)=>a.source.localeCompare(b.source)||a.account.localeCompare(b.account))){const row=sheet.addRow([
+      item.source,item.account,...concepts.map(concept=>(item.concepts.get(concept)??0)/100),item.q1/100,item.q2/100,item.total/100]);
+      for(let column=3;column<=headers.length;column+=1)row.getCell(column).numFmt=MONEY;borders(row,headers.length);}
+    if(!grouped.size)sheet.addRow(['SIN RETENIDOS','','',...Array(Math.max(0,headers.length-3)).fill('')]);
+    const totalRow=sheet.addRow(['TOTAL RETENIDO',null,...concepts.map(concept=>totals.filter(row=>String(row.concept_name||'SIN CONCEPTO')===concept)
+      .reduce((sum,row)=>sum+Number(row.amount_cents),0)/100),totals.filter(row=>Number(row.fortnight)===q1).reduce((sum,row)=>sum+Number(row.amount_cents),0)/100,
+      totals.filter(row=>Number(row.fortnight)===q2).reduce((sum,row)=>sum+Number(row.amount_cents),0)/100,totalAmount/100]);
+    for(let column=1;column<=headers.length;column+=1){const cell=totalRow.getCell(column);cell.font={ bold:true,color:{ argb:'FFFFFFFF' } };
+      cell.fill={ type:'pattern',pattern:'solid',fgColor:{ argb:RED } };if(column>=3)cell.numFmt=MONEY;}
+    sheet.autoFilter={ from:{ row:start,column:1 },to:{ row:start,column:headers.length } };sheet.getColumn(1).width=18;sheet.getColumn(2).width=34;
+    for(let column=3;column<=headers.length;column+=1)sheet.getColumn(column).width=19;
   }
 
   private addPayroll(workbook:ExcelJS.Workbook,rec:ReconciliationRow,batches:DataRow[],totals:DataRow[]):void{
@@ -98,13 +134,12 @@ export class MonthlyReportBuilder {
   }
 
   private addRetained(workbook:ExcelJS.Workbook,rec:ReconciliationRow,reconciliationId:number):void{
-    const sheet=workbook.addWorksheet('Retenidos',{ views:[{ state:'frozen',ySplit:4,showGridLines:false }] }); const headers=['Quincena','Tipo','Archivo','Empleado','Nombre','Encontrados','Excluidos','Resultado'];
+    const sheet=workbook.addWorksheet('Retenidos',{ views:[{ state:'frozen',ySplit:4,showGridLines:false }] }); const headers=['Quincena','Tipo','Archivo','Empleado','Nombre','Movimientos retenidos'];
     title(sheet,'Empleados retenidos','Lista aplicada de forma independiente por TXT',headers.length); sheet.getRow(4).values=headers; header(sheet.getRow(4),headers.length);
     const rows=this.database.prepare(`SELECT pb.fortnight,pt.name payroll_type,pb.original_filename,r.* FROM batch_retained_employees r JOIN payroll_batches pb ON pb.id=r.batch_id
       JOIN payroll_types pt ON pt.id=pb.payroll_type_id WHERE pb.reconciliation_id=? AND pb.is_active=1 ORDER BY pb.fortnight,pt.name,r.employee_number`).all(reconciliationId) as DataRow[];
-    for(const item of rows){ const row=sheet.addRow([`Q${String(item.fortnight).padStart(2,'0')}`,item.payroll_type,item.original_filename,item.employee_number,item.employee_name??'',item.found_records,item.excluded_records,
-      Number(item.found_records)?'Encontrado':'No encontrado']); borders(row,headers.length); }
-    if(!rows.length)sheet.addRow(['','','','','No se capturaron empleados retenidos.']); sheet.autoFilter={ from:'A4',to:'H4' };
-    [12,24,46,18,38,14,14,20].forEach((w,i)=>sheet.getColumn(i+1).width=w);
+    for(const item of rows){ const row=sheet.addRow([`Q${String(item.fortnight).padStart(2,'0')}`,item.payroll_type,item.original_filename,item.employee_number,item.employee_name??'',item.found_records]); borders(row,headers.length); }
+    if(!rows.length)sheet.addRow(['','','','','No se capturaron empleados retenidos.','']); sheet.autoFilter={ from:'A4',to:'F4' };
+    [12,24,46,18,38,22].forEach((w,i)=>sheet.getColumn(i+1).width=w);
   }
 }

@@ -10,7 +10,7 @@ import type { BatchSummary, ConceptAlias, ConceptGroup, MonthlyReconciliationSum
 import { canonicalConceptName, canonicalizeConceptDescription } from '../../shared/utils/normalization.js';
 import { DatabaseService } from '../database/DatabaseService.js';
 import { BackupService } from '../services/BackupService.js';
-import { ACTIVE_CONCEPT_MATCHERS_SQL, ConceptMatcher, type ConceptMatchRule } from '../services/ConceptMatcher.js';
+import { ACTIVE_CONCEPT_MATCHERS_SQL, type ConceptMatchRule } from '../services/ConceptMatcher.js';
 import { inspectPayrollFile } from '../services/PreflightService.js';
 import { ProcessingService } from '../services/ProcessingService.js';
 import { getMonthlyReportDirectory } from '../services/ReportPathService.js';
@@ -53,16 +53,14 @@ export function registerIpcHandlers(windowProvider: () => BrowserWindow | null, 
     return { processId: processing.start(request, { files, outputDirectory }) };
   });
   ipcMain.handle('payroll:validate-retained', async (_event, raw: unknown): Promise<RetainedValidationResult> => {
-    const request = retainedValidationSchema.parse(raw); const db = new DatabaseService(databasePath);
-    const rules = db.connection.prepare(ACTIVE_CONCEPT_MATCHERS_SQL).all() as ConceptMatchRule[]; db.close(); const matcher = new ConceptMatcher(rules);
+    const request = retainedValidationSchema.parse(raw);
     const matches: RetainedValidationResult['matches'] = [];
     for (const source of request.files) {
       const path = resolveToken(fileTokens, source.fileToken, 'Selecciona nuevamente los archivos de nómina.');
-      const selected = new Set(source.selectedConceptIds); const byEmployee = new Map(source.retainedEmployeeNumbers.map((number) => [number,
+      const byEmployee = new Map(source.retainedEmployeeNumbers.map((number) => [number,
         { fileToken: source.fileToken, employeeNumber: number, employeeName: null as string | null, found: false, matchingRecords: 0 }]));
       for await (const item of new TxtStreamParser().parse(path)) { if (!item.record) continue; const found = byEmployee.get(item.record.employeeNumber); if (!found) continue;
-        found.found = true; found.employeeName ||= item.record.employeeName; const classification = matcher.classify(item.record);
-        if (classification.conceptId && selected.has(classification.conceptId)) found.matchingRecords += 1; }
+        found.found = true; found.employeeName ||= item.record.employeeName; found.matchingRecords += 1; }
       matches.push(...byEmployee.values());
     }
     return { matches, missingCount: matches.filter((item) => !item.found).length };

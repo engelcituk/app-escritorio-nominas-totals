@@ -12,6 +12,7 @@ describe('esquema inicial del expediente mensual', () => {
     expect(MIGRATIONS[0]?.sql).toContain('CREATE TABLE IF NOT EXISTS concept_aliases');
     expect(MIGRATIONS[0]?.sql).toContain('CREATE TABLE IF NOT EXISTS batch_concept_snapshots');
     expect(MIGRATIONS[0]?.sql).toContain('CREATE TABLE IF NOT EXISTS batch_retained_employees');
+    expect(MIGRATIONS[0]?.sql).toContain('CREATE TABLE IF NOT EXISTS batch_retained_totals');
     expect(MIGRATIONS[0]?.sql).toContain('CREATE TABLE IF NOT EXISTS report_artifacts');
     expect(MIGRATIONS[0]?.sql).toContain('source_key TEXT NOT NULL');
     expect(MIGRATIONS[0]?.sql).toContain('idx_active_batch_slot');

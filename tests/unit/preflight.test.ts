@@ -25,7 +25,7 @@ describe('preflight', () => {
     const result = await inspectPayrollFile(path, { token: '00000000-0000-4000-8000-000000000000', name: 'uniform-isr.txt',
       size: info.size, modifiedAt: info.mtime.toISOString() }, false, [rule]);
     expect(result.preview).toEqual([]);
-    expect(result.totalLines).toBe(3);
+    expect(result.totalLines).toBe(4);
     expect(result.detectedConcepts.find((item) => item.normalizedDescription === 'ISR POR SALARIOS'))
       .toMatchObject({ recordCount: 2, catalogConcept: { id: 1 } });
   });
