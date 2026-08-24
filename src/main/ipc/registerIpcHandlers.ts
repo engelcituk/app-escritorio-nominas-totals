@@ -137,15 +137,16 @@ function insertAlias(db: DatabaseService, conceptId: number, description: string
 
 function listPayrollTypes(databasePath:string,includeInactive=false):PayrollTypeSummary[]{ const db=new DatabaseService(databasePath); try{
   return (db.connection.prepare(`SELECT pt.*,EXISTS(SELECT 1 FROM payroll_batches pb WHERE pb.payroll_type_id=pt.id) used FROM payroll_types pt
-    ${includeInactive?'':'WHERE pt.active=1'} ORDER BY pt.name`).all() as Array<Record<string,string|number>>).map(r=>({ id:Number(r.id),code:String(r.code),
+    ${includeInactive?'':'WHERE pt.active=1'} ORDER BY pt.sort_order,pt.name`).all() as Array<Record<string,string|number>>).map(r=>({ id:Number(r.id),code:String(r.code),
     name:String(r.name),active:Boolean(r.active),used:Boolean(r.used) })); }finally{db.close();} }
 function savePayrollType(databasePath:string,value:PayrollTypeDraft):number{ const db=new DatabaseService(databasePath); const now=new Date().toISOString(); try{
   return db.connection.transaction(()=>{ if(value.id){ const current=db.connection.prepare('SELECT code FROM payroll_types WHERE id=?').get(value.id) as { code:string }|undefined;
       if(!current)throw new Error('No se encontró el tipo de nómina.'); if(current.code!==value.code&&db.connection.prepare('SELECT 1 FROM payroll_batches WHERE payroll_type_id=? LIMIT 1').get(value.id))
         throw new Error('El código de un tipo utilizado no puede modificarse.'); db.connection.prepare('UPDATE payroll_types SET code=?,name=?,active=?,updated_at=? WHERE id=?')
         .run(value.code,value.name,value.active?1:0,now,value.id); return value.id; }
-    return Number(db.connection.prepare('INSERT INTO payroll_types(code,name,active,created_at,updated_at) VALUES (?,?,?,?,?)')
-      .run(value.code,value.name,value.active?1:0,now,now).lastInsertRowid); })(); }finally{db.close();} }
+    const sortOrder=Number((db.connection.prepare('SELECT COALESCE(MAX(sort_order),0)+1 value FROM payroll_types').get() as { value:number }).value);
+    return Number(db.connection.prepare('INSERT INTO payroll_types(code,name,sort_order,active,created_at,updated_at) VALUES (?,?,?,?,?,?)')
+      .run(value.code,value.name,sortOrder,value.active?1:0,now,now).lastInsertRowid); })(); }finally{db.close();} }
 
 function getOrCreateMonthly(databasePath:string,key:{ year:number;month:number;conceptGroupId:number }):MonthlyReconciliationSummary{ const db=new DatabaseService(databasePath); try{
   let row=db.connection.prepare('SELECT id FROM monthly_reconciliations WHERE year=? AND month=? AND concept_group_id=?')

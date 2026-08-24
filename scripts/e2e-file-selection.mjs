@@ -21,12 +21,8 @@ try {
     shell.openPath = async () => '';
   }, { fixturePath, reportDirectory });
   await window.getByRole('navigation').getByRole('link', { name: 'Expedientes mensuales', exact: true }).click();
-  const monthlyStatus = window.locator('details.monthly-status');
-  await monthlyStatus.waitFor();
-  if (await monthlyStatus.evaluate((element) => element.open)) throw new Error('La matriz mensual debe iniciar contraída.');
-  await monthlyStatus.locator('summary').click();
-  await monthlyStatus.getByRole('table').waitFor();
-  await monthlyStatus.locator('summary').click();
+  if (await window.locator('.monthly-status').count()) throw new Error('La matriz mensual no debe ocupar espacio en el flujo.');
+  await window.getByRole('button', { name: 'Abrir reporte mensual', exact: true }).waitFor();
   await window.getByRole('button', { name: 'Seleccionar archivos TXT', exact: true }).click();
   const selectedFilename = await window.getByText('uniform-isr.txt', { exact: true }).first().textContent();
   await window.getByText('Vista previa del primer TXT', { exact: true }).click();
@@ -47,6 +43,6 @@ try {
   await window.getByRole('button', { name: 'Abrir carpeta de reportes', exact: true }).click();
   await window.getByRole('button', { name: 'Actualizar expediente', exact: true }).click();
   await window.getByText('Expediente y reporte mensual actualizados.', { exact: true }).waitFor({ timeout: 60000 });
-  console.log(JSON.stringify({ preloadReady, selectedFilename, processing: 'completed', monthlyMatrixCollapsed: true,
+  console.log(JSON.stringify({ preloadReady, selectedFilename, processing: 'completed', monthlyMatrixRemoved: true,
     previewLayout, wideLayout, compactLayout }));
 } finally { await electronApp.close(); await rm(userDataDirectory, { recursive: true, force: true }); }

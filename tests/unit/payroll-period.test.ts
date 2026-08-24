@@ -13,6 +13,7 @@ describe('periodos mensuales de nómina', () => {
     expect(parsePayrollFilename('QNA_13_2026_HONORARIOS FASP.txt')).toEqual({
       year: 2026, fortnight: 13, payrollTypeCode: 'HONORARIOS_FASP',
     });
+    expect(parsePayrollFilename('QNA_11_2026_SUELDOS.txt')?.payrollTypeCode).toBe('SUELDOS');
   });
 
   it('no infiere metadatos de nombres ambiguos', () => {

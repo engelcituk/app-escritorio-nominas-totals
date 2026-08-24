@@ -17,7 +17,7 @@ try {
   const outputDirectory = join(root, 'reportes');
   const fixture = await readFile(resolve('tests/fixtures/uniform-isr.txt'), 'utf8');
   const q13Path = join(root, 'QNA_13_2026_SUELDOS.txt');
-  const q14Path = join(root, 'QNA_14_2026_HONORARIOS.txt');
+  const q14Path = join(root, 'QNA_14_2026_SUELDOS.txt');
   const q13ReplacementPath = join(root, 'QNA_13_2026_SUELDOS_CORREGIDO.txt');
   const q13FailedPath = join(root, 'QNA_13_2026_SUELDOS_FALLIDO.txt');
   await writeFile(q13Path, fixture, 'utf8');
@@ -31,14 +31,22 @@ try {
     FROM payroll_concepts c JOIN concept_groups g ON g.id=c.group_id WHERE c.code='ISR_POR_SALARIOS'`).get();
   const refund = setup.connection.prepare(`SELECT operation_factor operationFactor FROM payroll_concepts
     WHERE code='REINTEGRO_DE_ISR_PAGADO_EN_EXCESO'`).get();
-  const payrollTypes = setup.connection.prepare('SELECT id,code FROM payroll_types ORDER BY id').all();
+  const payrollTypes = setup.connection.prepare('SELECT id,code,name,sort_order FROM payroll_types ORDER BY sort_order').all();
   if (!concept || concept.name !== 'ISR POR SALARIOS' || concept.groupCode !== 'ISR' || concept.operationFactor !== 1 || refund?.operationFactor !== -1) {
     throw new Error('El catálogo inicial no contiene el grupo ISR y sus operaciones firmadas.');
   }
-  const expectedTypes = ['SUELDOS','ASIMILADOS','COMPENSACIONES','HONORARIOS','HONORARIOS_FASP','EXTRAORDINARIOS',
-    'RETROACTIVOS','PRIMA_VACACIONAL','PAGOS_DIVERSOS','OTROS'];
-  if (expectedTypes.some((code) => !payrollTypes.some((type) => type.code === code))) {
+  const expectedTypes = ['SUELDOS','COMPENSACION','PAGOS_DIVERSOS','REEXPEDICION_NOMINA','FONDO_AHORRO','ESTIMULO_DIA_MADRES',
+    'PRIMA_VACACIONAL_1','NOMINA_ESTIMULOS_ANOS_SERVICIO','ESTIMULO_DIA_EMPLEADO_ESTATAL','ESTIMULO_DIA_PADRE',
+    'PAGOS_DIVERSOS_COMPLEMENTARIA','VALES_ESCOLARES','VALES_UTILES_ESCOLARES_MOCHILA','CANASTA_NAVIDENA','APOYO_DESPENSA_FIN_ANO',
+    'VALES_PAVO_NAVIDENO','MOCHILAS_ESCOLARES','AGUINALDO_1','AGUINALDO_2','AGUINALDO_COMPENSACION','PRIMA_VACACIONAL_2',
+    'AGUINALDO_ASIMILADOS_SALARIOS','BONO_NAVIDENO','ESTIMULO_DIA_POLICIA','LAUDOS','ESTIMULOS_EXTRAORDINARIOS',
+    'NOMINA_EXTRAORDINARIA_SUELDOS','NOMINA_EXTRAORDINARIA_COMPENSACIONES','REEXPEDICION_NOMINA_COMPLEMENTARIA',
+    'ESTIMULOS_EXTRAORDINARIOS_COMPLEMENTARIA'];
+  if (payrollTypes.length !== expectedTypes.length || expectedTypes.some((code,index) => payrollTypes[index]?.code !== code)) {
     throw new Error('El catálogo inicial de tipos de nómina está incompleto.');
+  }
+  if (payrollTypes[0].name !== 'Nómina ordinaria' || payrollTypes[0].sort_order !== 1 || payrollTypes[29].sort_order !== 30) {
+    throw new Error('El catálogo inicial de tipos de nómina no conserva nombres y orden institucionales.');
   }
   const typeId = (code) => payrollTypes.find((type) => type.code === code).id;
   const reconciliationId = Number(setup.connection.prepare(`INSERT INTO monthly_reconciliations
@@ -49,7 +57,7 @@ try {
   const first = await processBatch({ databasePath, outputDirectory, reconciliationId, filePath: q13Path, fortnight: 13,
     payrollTypeId: typeId('SUELDOS'), selectedConceptIds: [concept.id], retainedEmployeeNumbers: ['1001'], replaceActiveBatch: false });
   const second = await processBatch({ databasePath, outputDirectory, reconciliationId, filePath: q14Path, fortnight: 14,
-    payrollTypeId: typeId('HONORARIOS'), selectedConceptIds: [concept.id], retainedEmployeeNumbers: ['1001'], replaceActiveBatch: false });
+    payrollTypeId: typeId('SUELDOS'), selectedConceptIds: [concept.id], retainedEmployeeNumbers: ['1001'], replaceActiveBatch: false });
   if (first.monthlyReport !== second.monthlyReport) throw new Error('La segunda quincena no actualizó la misma ruta mensual.');
   const replacement = await processBatch({ databasePath, outputDirectory, reconciliationId, filePath: q13ReplacementPath, fortnight: 13,
     payrollTypeId: typeId('SUELDOS'), selectedConceptIds: [concept.id], retainedEmployeeNumbers: [], replaceActiveBatch: true });

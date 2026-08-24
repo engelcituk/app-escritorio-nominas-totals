@@ -7,6 +7,7 @@ describe('esquema inicial del expediente mensual', () => {
     expect(MIGRATIONS[0]?.version).toBe(1);
     expect(MIGRATIONS[0]?.sql).toContain('CREATE TABLE IF NOT EXISTS monthly_reconciliations');
     expect(MIGRATIONS[0]?.sql).toContain('CREATE TABLE IF NOT EXISTS payroll_types');
+    expect(MIGRATIONS[0]?.sql).toContain('sort_order INTEGER NOT NULL UNIQUE');
     expect(MIGRATIONS[0]?.sql).toContain('CREATE TABLE IF NOT EXISTS concept_groups');
     expect(MIGRATIONS[0]?.sql).toContain('CREATE TABLE IF NOT EXISTS payroll_concepts');
     expect(MIGRATIONS[0]?.sql).toContain('CREATE TABLE IF NOT EXISTS concept_aliases');

@@ -94,10 +94,37 @@ RETRO COMPENSACION HAC
 REINTEGRO DE ISR PAGADO EN EXCESO`.trim().split('\n');
 
 const ISR_NAMES = new Set(['ISR POR SALARIOS', 'ISR EVENTUALES', 'ISR RETRO', 'ISR EVENTUALES RETRO', 'REINTEGRO DE ISR PAGADO EN EXCESO']);
-const PAYROLL_TYPES = [
-  ['SUELDOS', 'Sueldos'], ['ASIMILADOS', 'Asimilados'], ['COMPENSACIONES', 'Compensaciones'],
-  ['HONORARIOS', 'Honorarios'], ['HONORARIOS_FASP', 'Honorarios FASP'], ['EXTRAORDINARIOS', 'Extraordinarios'],
-  ['RETROACTIVOS', 'Retroactivos'], ['PRIMA_VACACIONAL', 'Prima vacacional'], ['PAGOS_DIVERSOS', 'Pagos diversos'], ['OTROS', 'Otros'],
+export const INITIAL_PAYROLL_TYPES = [
+  ['SUELDOS', 'Nómina ordinaria'],
+  ['COMPENSACION', 'Compensación'],
+  ['PAGOS_DIVERSOS', 'Pagos diversos'],
+  ['REEXPEDICION_NOMINA', 'Reexpedición de nómina'],
+  ['FONDO_AHORRO', 'Fondo de ahorro'],
+  ['ESTIMULO_DIA_MADRES', 'Estímulo Día de las Madres'],
+  ['PRIMA_VACACIONAL_1', 'Prima vacacional 1er. periodo'],
+  ['NOMINA_ESTIMULOS_ANOS_SERVICIO', 'Nómina estímulos x años de servicios'],
+  ['ESTIMULO_DIA_EMPLEADO_ESTATAL', 'Estímulo Día del Empleado Estatal'],
+  ['ESTIMULO_DIA_PADRE', 'Estímulo por el Día del Padre'],
+  ['PAGOS_DIVERSOS_COMPLEMENTARIA', 'Pagos diversos complementaria'],
+  ['VALES_ESCOLARES', 'Vales escolares'],
+  ['VALES_UTILES_ESCOLARES_MOCHILA', 'Vales útiles escolares p/mochila'],
+  ['CANASTA_NAVIDENA', 'Canasta navideña'],
+  ['APOYO_DESPENSA_FIN_ANO', 'Apoyo de despensa para fin de año'],
+  ['VALES_PAVO_NAVIDENO', 'Vales pavo navideño'],
+  ['MOCHILAS_ESCOLARES', 'Mochilas escolares'],
+  ['AGUINALDO_1', 'Aguinaldo 1era parte'],
+  ['AGUINALDO_2', 'Aguinaldo 2da parte'],
+  ['AGUINALDO_COMPENSACION', 'Aguinaldo compensación'],
+  ['PRIMA_VACACIONAL_2', 'Prima vacacional 2do. periodo'],
+  ['AGUINALDO_ASIMILADOS_SALARIOS', 'Aguinaldo asimilados a salarios'],
+  ['BONO_NAVIDENO', 'Bono navideño'],
+  ['ESTIMULO_DIA_POLICIA', 'Estímulo Día del Policía'],
+  ['LAUDOS', 'Laudos'],
+  ['ESTIMULOS_EXTRAORDINARIOS', 'Estímulos extraordinarios'],
+  ['NOMINA_EXTRAORDINARIA_SUELDOS', 'Nómina extraordinaria sueldos'],
+  ['NOMINA_EXTRAORDINARIA_COMPENSACIONES', 'Nómina extraordinaria compensaciones'],
+  ['REEXPEDICION_NOMINA_COMPLEMENTARIA', 'Reexpedición de nómina complementaria'],
+  ['ESTIMULOS_EXTRAORDINARIOS_COMPLEMENTARIA', 'Estímulos extraordinarios complementaria'],
 ] as const;
 
 export class IncompatibleSchemaError extends Error {
@@ -146,9 +173,9 @@ export class DatabaseService {
 
   private seedPayrollTypes(): void {
     const now = new Date().toISOString();
-    const insert = this.connection.prepare(`INSERT INTO payroll_types(code,name,active,created_at,updated_at)
-      VALUES (?,?,1,?,?) ON CONFLICT(code) DO NOTHING`);
-    this.connection.transaction(() => { for (const [code, name] of PAYROLL_TYPES) insert.run(code, name, now, now); })();
+    const insert = this.connection.prepare(`INSERT INTO payroll_types(code,name,sort_order,active,created_at,updated_at)
+      VALUES (?,?,?,1,?,?) ON CONFLICT(code) DO NOTHING`);
+    this.connection.transaction(() => { INITIAL_PAYROLL_TYPES.forEach(([code,name],index)=>insert.run(code,name,index+1,now,now)); })();
   }
 
   private synchronizeSeededConceptNames(): void {
@@ -175,6 +202,7 @@ export class DatabaseService {
       monthly_reconciliations: ['year', 'month', 'concept_group_id', 'revision', 'total_amount_cents'],
       payroll_batches: ['reconciliation_id', 'month', 'fortnight', 'payroll_type_id', 'file_hash_sha256', 'is_active', 'replaced_batch_id'],
       payroll_concepts: ['code', 'group_id', 'operation_factor', 'active'],
+      payroll_types: ['code', 'name', 'sort_order', 'active'],
       concept_aliases: ['concept_id', 'normalized_description', 'active'],
       batch_retained_employees: ['batch_id', 'employee_number', 'missing_acknowledged'],
       batch_retained_totals: ['batch_id', 'employee_number', 'source_key', 'account_code', 'concept_name', 'record_count', 'amount_cents'],

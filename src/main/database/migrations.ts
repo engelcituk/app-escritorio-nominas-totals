@@ -23,7 +23,7 @@ export const MIGRATIONS: readonly Migration[] = [{
     );
     CREATE TABLE IF NOT EXISTS payroll_types (
       id INTEGER PRIMARY KEY, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1,
-      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      sort_order INTEGER NOT NULL UNIQUE, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS monthly_reconciliations (
       id INTEGER PRIMARY KEY, year INTEGER NOT NULL, month INTEGER NOT NULL CHECK(month BETWEEN 1 AND 12),

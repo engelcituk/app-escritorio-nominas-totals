@@ -201,6 +201,8 @@
 .quick-concept-form { display: grid; grid-template-columns: 1.3fr 1fr 1fr 1fr auto; gap: .75rem; align-items: end; margin-top: 1rem; padding: 1rem; border: 1px solid #c7d7ee; border-left: 4px solid #315d95; border-radius: .4rem; background: #f7faff; }
 .quick-concept-form h3 { margin: 0; font-size: 1rem; }.quick-concept-form p { margin: .25rem 0 0; color: #475467; font-size: .85rem; }
 .retained-files { display: grid; gap: .75rem; }.retained-files details > :not(summary) { margin-right: 1rem; margin-left: 1rem; }.retained-files details > :last-child { margin-bottom: 1rem; }
+.retained-files summary strong { min-width: 0; overflow-wrap: anywhere; }
+.retained-files summary span { flex: 0 0 auto; color: #475467; font-size: .88rem; font-weight: 600; white-space: nowrap; }
 .review-files { display: grid; gap: .5rem; margin-bottom: 1rem; }.review-files article { display: grid; grid-template-columns: minmax(240px, 1fr) auto auto; gap: 1rem; padding: .7rem .85rem; border: 1px solid #e1e5eb; border-radius: .35rem; }
 
 .catalog-layout { display: grid; grid-template-columns: minmax(320px, .85fr) minmax(480px, 1.4fr); gap: 1rem; align-items: start; }

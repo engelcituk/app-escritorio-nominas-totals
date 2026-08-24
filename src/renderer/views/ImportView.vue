@@ -6,7 +6,6 @@ import type { ConceptGroup, DetectedConcept, MonthlyReconciliationResult, Monthl
 import { fortnightsForMonth } from '@shared/utils/payrollPeriod';
 import { parseEmployeeNumbers } from '@shared/utils/employeeNumbers';
 import ConceptMultiSelect from '../components/ConceptMultiSelect.vue';
-import MoneyValue from '../components/MoneyValue.vue';
 import PageHeader from '../components/PageHeader.vue';
 import ParsedPreviewTable from '../components/ParsedPreviewTable.vue';
 import ProcessingProgressView from '../components/ProcessingProgress.vue';
@@ -107,18 +106,15 @@ onMounted(async()=>{try{await loadCatalogs();await loadContext();}catch(cause){s
 </script>
 
 <template>
-  <PageHeader title="Expedientes mensuales" description="Integra las dos quincenas del mes y actualiza un único reporte por grupo de conceptos." />
+  <PageHeader title="Expedientes mensuales" description="Integra las dos quincenas del mes y actualiza un único reporte por grupo de conceptos.">
+    <template #actions><button class="btn btn-outline-primary" type="button" :disabled="openingReports||!reconciliation?.reportPath" @click="openReports"><i class="bi bi-folder2-open" aria-hidden="true" /> {{ openingReports?'Abriendo…':'Abrir reporte mensual' }}</button></template>
+  </PageHeader>
   <div ref="errorAlert" tabindex="-1"><div v-if="error" class="alert alert-danger" role="alert">{{ error }}</div></div>
   <section class="period-workspace" aria-labelledby="period-title"><div><span class="eyebrow">Periodo de trabajo</span><h2 id="period-title">Abrir expediente mensual</h2><p>Las cargas nuevas se acumulan; una carga del mismo tipo y quincena reemplaza la versión activa.</p></div>
     <div class="period-workspace__fields"><label>Año<input v-model.number="year" class="form-control" type="number" min="2000" max="2200" :disabled="processing" /></label>
       <label>Mes<select v-model.number="month" class="form-select" :disabled="processing"><option v-for="n in 12" :key="n" :value="n">{{ new Date(2026,n-1,1).toLocaleDateString('es-MX',{month:'long'}) }}</option></select></label>
       <label>Grupo<select v-model.number="conceptGroupId" class="form-select" :disabled="processing"><option v-for="group in groups.filter(g=>g.active)" :key="group.id" :value="group.id">{{ group.name }}</option></select></label></div></section>
   <div v-if="contextLoading" class="inline-loading" role="status"><span class="spinner-border spinner-border-sm" /> Abriendo expediente…</div>
-  <details v-else-if="reconciliation" class="monthly-status">
-    <summary class="monthly-status__summary"><div><span class="eyebrow">Expediente {{ reconciliation.id }} · revisión {{ reconciliation.revision }}</span><h2>{{ reconciliation.conceptGroupName }} · {{ year }}/{{ String(month).padStart(2,'0') }}</h2><small>{{ reconciliation.fileCount }} archivos activos · {{ reconciliation.fortnights.length }}/2 quincenas con información</small></div><div class="monthly-status__actions"><div class="monthly-status__total"><span>Total vigente</span><MoneyValue :cents="reconciliation.totalAmountCents" /></div><span class="monthly-status__toggle"><i class="bi bi-chevron-down" aria-hidden="true" /><span class="when-closed">Ver matriz</span><span class="when-open">Ocultar matriz</span></span></div></summary>
-    <div class="monthly-status__body"><div class="table-responsive"><table class="table align-middle mb-0"><caption class="visually-hidden">Cobertura por tipo de nómina y quincena</caption><thead><tr><th>Tipo de nómina</th><th v-for="q in allowedFortnights" :key="q">Q{{ String(q).padStart(2,'0') }}</th></tr></thead><tbody><tr v-for="type in visibleTypes" :key="type.id"><th scope="row">{{ type.name }}</th><td v-for="q in allowedFortnights" :key="q"><template v-if="activeFor(type.id,q)"><strong>v{{ activeFor(type.id,q)?.version }}</strong><small>{{ activeFor(type.id,q)?.originalFilename }}</small><MoneyValue :cents="activeFor(type.id,q)?.totalAmountCents ?? 0" /></template><span v-else class="text-muted">Sin archivo</span></td></tr></tbody></table></div>
-      <button v-if="reconciliation.reportPath" class="btn btn-outline-primary btn-sm" type="button" :disabled="openingReports" @click="openReports"><i class="bi bi-folder2-open" /> Abrir reporte mensual</button></div>
-  </details>
 
   <div class="process-steps mt-4">
     <StepSection :number="1" title="Archivos para actualizar" :description="`Solo ${allowedFortnights.map(q=>`Q${String(q).padStart(2,'0')}`).join(' y ')} pertenecen a este mes.`">
@@ -137,7 +133,7 @@ onMounted(async()=>{try{await loadCatalogs();await loadContext();}catch(cause){s
                                                                                                                                                                              <ConceptMultiSelect v-model="item.selectedConceptIds" :options="conceptOptions(item)" :filename="item.file.name" :loading="item.inspecting" @change="handleConceptChange(item)" @create="startQuickCreate(item.file.token,$event)" /></details>
       <form v-if="quickConcept" class="quick-concept-form" @submit.prevent="saveQuickConcept"><div><h3>Dar de alta concepto</h3><p>El alias se guardará con la descripción exacta del TXT.</p></div><label>Nombre<input v-model.trim="quickConcept.name" class="form-control" required /></label><label>Código<input v-model.trim="quickConcept.code" class="form-control" pattern="[A-Z0-9_]+" required /></label>
         <label>Grupo<select v-model="quickConcept.groupId" class="form-select"><option v-for="group in groups.filter(g=>g.active)" :key="group.id" :value="group.id">{{ group.name }}</option></select></label><label>Operación<select v-model.number="quickConcept.operationFactor" class="form-select"><option :value="1">Suma</option><option :value="-1">Resta</option></select></label><button class="btn btn-primary" :disabled="savingConcept">Guardar</button></form></StepSection>
-    <StepSection :number="3" title="Empleados retenidos" description="La lista es opcional e independiente para cada TXT." :disabled="!files.length">
+    <StepSection class="retained-files" :number="3" title="Empleados retenidos" description="La lista es opcional e independiente para cada TXT." :disabled="!files.length">
       <details v-for="item in files" :key="`ret-${item.file.token}`">
         <summary><strong>{{ item.file.name }}</strong><span>{{ parsedRetained(item).length }} empleados</span></summary>
         <label class="form-label" :for="`retained-${item.file.token}`">Números de empleado</label>
