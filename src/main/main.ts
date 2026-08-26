@@ -8,6 +8,10 @@ import { createMainWindow } from './window.js';
 import { DeviceService } from './services/central/DeviceService.js';
 import { createCentralServices } from './services/central/bootstrap.js';
 import { registerAuthHandlers } from './ipc/registerAuthHandlers.js';
+import { initializeDatabase } from './database/initializeDatabase.js';
+import { registerCatalogHandlers } from './ipc/registerCatalogHandlers.js';
+import { registerSyncHandlers } from './ipc/registerSyncHandlers.js';
+import { SyncOutboxService } from './services/central/SyncOutboxService.js';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -31,17 +35,25 @@ if (!hasSingleInstanceLock) {
     try {
       new DeviceService(db.connection, app.getVersion()).ensureIdentity();
       new RecoveryService(db.connection).recoverInterruptedBatches();
+      new SyncOutboxService(db.connection).recoverInterrupted();
     } finally { db.close(); }
-    const { auth, configuration } = await createCentralServices(databasePath, (status) => {
+    const { auth, configuration, catalog, withRepository, sync } = await createCentralServices(databasePath, (status) => {
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('auth:changed', status);
+    }, (status) => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('catalog:changed', status);
+    }, () => processing?.hasActiveProcesses() ?? false, (status) => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('sync:changed', status);
     });
     mainWindow = createMainWindow();
-    registerIpcHandlers(() => mainWindow, databasePath);
+    const processing = registerIpcHandlers(() => mainWindow, databasePath, catalog, sync);
     registerAuthHandlers(() => mainWindow, auth, configuration);
+    registerCatalogHandlers(() => mainWindow, catalog, withRepository);
+    registerSyncHandlers(() => mainWindow, sync);
+    sync.start();
     void auth.restore();
     const heartbeat = setInterval(() => { void auth.check(); }, 5 * 60_000);
     heartbeat.unref();
-    app.once('before-quit', () => { clearInterval(heartbeat); auth.dispose(); });
+    app.once('before-quit', () => { clearInterval(heartbeat); sync.dispose(); catalog.dispose(); auth.dispose(); });
     app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) mainWindow = createMainWindow(); });
   }).catch((error: unknown) => {
     const message = error instanceof Error ? error.message : 'No se pudo iniciar la aplicación.';
@@ -54,7 +66,7 @@ app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(
 
 async function openDevelopmentDatabase(databasePath: string): Promise<DatabaseService> {
   try {
-    return new DatabaseService(databasePath);
+    return await initializeDatabase(databasePath);
   } catch (error) {
     if (!(error instanceof IncompatibleSchemaError) || app.isPackaged) {
       if (error instanceof IncompatibleSchemaError) {
@@ -76,7 +88,7 @@ async function openDevelopmentDatabase(databasePath: string): Promise<DatabaseSe
     if (choice.response !== 0) throw new Error('El inicio fue cancelado porque la base local usa un esquema anterior.', { cause: error });
 
     await removeDevelopmentDatabase(databasePath);
-    const database = new DatabaseService(databasePath);
+    const database = await initializeDatabase(databasePath);
     database.connection.prepare(`INSERT INTO audit_logs(action, entity_type, description, metadata_json, created_at)
       VALUES ('RESET_SCHEMA', 'DATABASE', 'Se recreó la base de desarrollo por cambio de esquema.', ?, ?)`)
       .run(JSON.stringify({ reset: true }), new Date().toISOString());

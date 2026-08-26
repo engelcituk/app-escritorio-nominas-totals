@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { getMonthlyReportDirectory } from '../../src/main/services/ReportPathService.js';
+import { catalogPathSegment, getMonthlyReportDirectory } from '../../src/main/services/ReportPathService.js';
 import { getSourceReportFilename } from '../../src/main/services/ExcelReportBuilder.js';
 
 describe('organización de carpetas de reportes', () => {
@@ -11,9 +11,14 @@ describe('organización de carpetas de reportes', () => {
       .toBe(join('C:\\Reportes\\SEFIPLAN_Nomina', '2026', 'M01', 'OTRO_GRUPO'));
   });
 
-  it('rechaza periodos y códigos de carpeta inválidos', () => {
+  it('rechaza periodos inválidos y transforma códigos remotos sin permitir rutas arbitrarias', () => {
     expect(() => getMonthlyReportDirectory('C:\\Reportes', 2026, 13, 'ISR')).toThrow('El mes del reporte no es válido.');
-    expect(() => getMonthlyReportDirectory('C:\\Reportes', 2026, 6, '..')).toThrow('El grupo de conceptos del reporte no es válido.');
+    for (const code of ['..', '../outside', 'CON', 'grupo/otro', 'isr', 'C:\\datos']) {
+      expect(catalogPathSegment(code)).toMatch(/^central~[a-f0-9]{64}$/);
+      expect(getMonthlyReportDirectory('reports', 2026, 6, code)).toBe(join('reports', '2026', 'M06', catalogPathSegment(code)));
+      expect(getSourceReportFilename({ fortnight: 12, year: 2026, payroll_type_code: code, version: 1, layout_version: 1 }))
+        .toBe(`TXT_Completo_QNA_12_2026_${catalogPathSegment(code)}_V1_L1.xlsx`);
+    }
   });
 });
 

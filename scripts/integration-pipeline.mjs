@@ -1,4 +1,7 @@
 import { randomUUID } from 'node:crypto';
+import { verifyCatalogReplica } from './integration-catalog.mjs';
+import { verifyOutbox } from './integration-outbox.mjs';
+import { verifyResults } from './integration-results.mjs';
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -8,6 +11,9 @@ import ExcelJS from 'exceljs';
 import Database from 'better-sqlite3';
 import { app, safeStorage } from 'electron';
 import { DatabaseService } from '../dist/main/database/DatabaseService.js';
+import { seedLegacyCatalog } from '../tests/fixtures/legacy-catalog.mjs';
+import { snapshotFromLegacy } from '../tests/fixtures/snapshot-from-legacy.mjs';
+import { CatalogRepository } from '../dist/main/services/central/CatalogRepository.js';
 import { MIGRATIONS } from '../dist/main/database/migrations.js';
 import { MigrationService } from '../dist/main/database/MigrationService.js';
 import { ExcelReportBuilder } from '../dist/main/services/ExcelReportBuilder.js';
@@ -21,11 +27,16 @@ app.disableHardwareAcceleration();
 void runIntegration().then(() => app.quit(), (error) => { console.error(error); app.exit(1); });
 
 async function runIntegration() {
-const root = await mkdtemp(join(tmpdir(), 'sefiplan-monthly-integration-'));
+const externalRoot = process.env.SEFIPLAN_PIPELINE_TEST_ROOT;
+const root = externalRoot ?? await mkdtemp(join(tmpdir(), 'sefiplan-monthly-integration-'));
+assert.equal(dirname(resolve(root)), resolve(tmpdir()));
+assert.ok(basename(root).startsWith('sefiplan-monthly-integration-'));
 try {
   app.setPath('userData', root);
   await app.whenReady();
   await verifyIdentityAndSecureStorage(root);
+  await verifyCatalogReplica(root);
+  await verifyOutbox(root);
   const databasePath = join(root, 'integration.sqlite');
   const outputDirectory = join(root, 'reportes');
   const fixture = await readFile(resolve('tests/fixtures/uniform-isr.txt'), 'utf8');
@@ -38,7 +49,9 @@ try {
   await writeFile(q13ReplacementPath, fixture.replace('790,20', '800,20'), 'utf8');
   await writeFile(q13FailedPath, fixture.replace('790,20', '810,20'), 'utf8');
 
-  const setup = new DatabaseService(databasePath);
+  const setup = new DatabaseService(databasePath, { initialize: true });
+  seedLegacyCatalog(setup.connection);
+  new CatalogRepository(setup.connection).apply(snapshotFromLegacy(setup.connection), 'https://nomina.example', 604800);
   const now = new Date().toISOString();
   const concept = setup.connection.prepare(`SELECT c.id,c.name,c.operation_factor operationFactor,g.id groupId,g.code groupCode
     FROM payroll_concepts c JOIN concept_groups g ON g.id=c.group_id WHERE c.code='ISR_POR_SALARIOS'`).get();
@@ -173,13 +186,14 @@ try {
     throw new Error(`Se generó un tipo de reporte no solicitado: ${xlsxFiles.map((file) => basename(file)).join(', ')}.`);
   }
   db.close();
+  await verifyResults(root, databasePath);
   console.log(JSON.stringify({ reconciliationId, activeBatches: active.map((item) => item.id), monthlyTotalCents: rec.total_amount_cents,
     monthlyReport: replacement.monthlyReport, sourceReports: [first.sourcePath, second.sourcePath, replacement.sourcePath],
     workbookSheets: expectedSheets, exportedMonthlyTotal, failedReplacementPreserved: true, reportTypes: ['TXT_COMPLETO','TOTALES_MENSUALES'] }));
 } finally {
   assert.equal(dirname(root), resolve(tmpdir()));
   assert.ok(basename(root).startsWith('sefiplan-monthly-integration-'));
-  await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  if (!externalRoot) await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 }
 }
 
@@ -224,7 +238,7 @@ async function verifyIdentityAndSecureStorage(directory) {
     assert.equal(identity.installationUuid, installationUuid);
     assert.equal(identity.appVersion, '0.1.1');
     assert.equal(reopened.prepare('SELECT COUNT(*) count FROM app_identity').get().count, 1);
-    assert.equal(reopened.prepare('SELECT COUNT(*) count FROM schema_migrations').get().count, 2);
+    assert.equal(reopened.prepare('SELECT COUNT(*) count FROM schema_migrations').get().count, MIGRATIONS.length);
     const restored = new Database(':memory:');
     try {
       new MigrationService(restored).run();
@@ -251,14 +265,14 @@ async function verifyIdentityAndSecureStorage(directory) {
   assert.equal((await readFile(path)).includes(Buffer.from(canary)), false);
   await store.clear();
   assert.equal(await store.read(context), null);
-  console.log(JSON.stringify({ identityMigration: 'v1-to-v2', legacyPreserved: true, identityStable: true,
+  console.log(JSON.stringify({ identityMigration: 'v1-to-v5', legacyPreserved: true, identityStable: true,
     secureStorage: 'real-electron-roundtrip', tokenStoredInSQLite: false }));
 }
 
 async function processBatch({ databasePath, outputDirectory, reconciliationId, filePath, fortnight, payrollTypeId,
   selectedConceptIds, retainedEmployeeNumbers, replaceActiveBatch }) {
   const worker = new Worker(new URL('../dist/main/workers/PayrollProcessingWorker.js', import.meta.url), { workerData: {
-    processId: randomUUID(), reconciliationId, sourceOrder: Date.now(), databasePath, filePath, year: 2026, month: 7,
+    catalogRevision: 1, processId: randomUUID(), reconciliationId, sourceOrder: Date.now(), databasePath, filePath, year: 2026, month: 7,
     fortnight, payrollTypeId, selectedConceptIds, retainedEmployeeNumbers, missingAcknowledged: false, replaceActiveBatch,
   } });
   const processed = await new Promise((resolveMessage, reject) => {

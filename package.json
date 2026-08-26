@@ -12,7 +12,7 @@
     "build:preload": "esbuild src/preload/preload.ts --bundle --platform=node --format=cjs --external:electron --outfile=dist/preload/preload.cjs",
     "typecheck": "vue-tsc --noEmit -p tsconfig.renderer.json && tsc --noEmit -p tsconfig.main.json",
     "test": "vitest run",
-    "test:integration": "electron scripts/integration-pipeline.mjs",
+    "test:integration": "node scripts/run-pipeline-integration.mjs",
     "test:integration:auth": "node scripts/run-auth-integration.mjs",
     "test:e2e:auth": "node scripts/e2e-auth.mjs",
     "test:e2e:selection": "node scripts/e2e-file-selection.mjs",

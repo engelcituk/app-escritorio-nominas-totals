@@ -5,7 +5,7 @@ import ExcelJS from 'exceljs';
 import { UNIFORM_PAYROLL_COLUMNS, UNIFORM_PAYROLL_LAYOUT } from '../../shared/payroll-layouts/uniformPayrollLayout.js';
 import { parseAmountToCents } from '../../shared/utils/money.js';
 import { calculateFileSha256 } from './FileHashService.js';
-import { getMonthlyReportDirectory } from './ReportPathService.js';
+import { catalogPathSegment, getMonthlyReportDirectory } from './ReportPathService.js';
 import { TxtStreamParser } from './TxtStreamParser.js';
 
 interface BatchRow {
@@ -16,7 +16,7 @@ interface BatchRow {
 type SourceReportIdentity = Pick<BatchRow, 'fortnight' | 'year' | 'payroll_type_code' | 'version' | 'layout_version'>;
 
 export function getSourceReportFilename(batch: SourceReportIdentity): string {
-  const suffix = `QNA_${String(batch.fortnight).padStart(2,'0')}_${batch.year}_${batch.payroll_type_code}_V${batch.version}_L${batch.layout_version}`;
+  const suffix = `QNA_${String(batch.fortnight).padStart(2,'0')}_${batch.year}_${catalogPathSegment(batch.payroll_type_code)}_V${batch.version}_L${batch.layout_version}`;
   return `TXT_Completo_${suffix}.xlsx`;
 }
 
@@ -36,10 +36,10 @@ export class ExcelReportBuilder {
   constructor(private readonly database: Database.Database, private readonly outputDirectory: string) {}
 
   async build(batchId: number, sourceFilePath: string): Promise<{ sourcePath: string }> {
-    const batch = this.database.prepare(`SELECT pb.*,pt.code payroll_type_code FROM payroll_batches pb
+    const batch = this.database.prepare(`SELECT pb.*,COALESCE(pb.payroll_type_code_snapshot,pt.code) payroll_type_code FROM payroll_batches pb
       JOIN payroll_types pt ON pt.id=pb.payroll_type_id WHERE pb.id=?`).get(batchId) as BatchRow | undefined;
     if (!batch) throw new Error('No se encontró el lote para generar el TXT completo.');
-    const groupCode = (this.database.prepare(`SELECT cg.code FROM monthly_reconciliations mr JOIN concept_groups cg ON cg.id=mr.concept_group_id
+    const groupCode = (this.database.prepare(`SELECT COALESCE(mr.concept_group_code_snapshot,cg.code) code FROM monthly_reconciliations mr JOIN concept_groups cg ON cg.id=mr.concept_group_id
       WHERE mr.id=?`).get(batch.reconciliation_id) as { code: string }).code;
     const directory = getMonthlyReportDirectory(this.outputDirectory,batch.year,batch.month,groupCode);
     await fs.mkdir(directory,{ recursive:true });

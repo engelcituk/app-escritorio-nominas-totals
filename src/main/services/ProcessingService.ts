@@ -7,24 +7,32 @@ import type { MonthlyReconciliationResult, ProcessMonthlyImportRequest, Processi
 import { DatabaseService } from '../database/DatabaseService.js';
 import { ExcelReportBuilder } from './ExcelReportBuilder.js';
 import { MonthlyReportBuilder } from './MonthlyReportBuilder.js';
+import { SyncOutboxService } from './central/SyncOutboxService.js';
+import { ResultPublicationService } from './central/ResultPublicationService.js';
 
 interface GroupPaths { files:Array<{ filePath:string;name:string }>; outputDirectory:string }
 interface WorkerResult { batchId:number;counters:Record<string,number>;totalAmountCents:number }
 
 export class ProcessingService {
   private readonly workers=new Map<string,Worker>(); private readonly cancelled=new Set<string>();
-  constructor(private readonly databasePath:string,private readonly getWindow:()=>BrowserWindow|null){}
+  private readonly activeProcesses = new Set<string>();
+  private maintenance = false;
+  setMaintenance(value: boolean): void { this.maintenance = value; }
+  constructor(private readonly databasePath:string,private readonly getWindow:()=>BrowserWindow|null,
+    private readonly authorize: (revision: number) => void, private readonly onActivityChanged: () => void = () => {}){}
 
   start(request:ProcessMonthlyImportRequest,paths:GroupPaths):string{
-    const processId=randomUUID(); const reconciliationId=this.getOrCreateReconciliation(request); void this.run(processId,reconciliationId,request,paths); return processId;
+    this.authorize(request.catalogRevision);
+    const processId=randomUUID(); const reconciliationId=this.getOrCreateReconciliation(request);
+    this.activeProcesses.add(processId); this.onActivityChanged(); void this.run(processId,reconciliationId,request,paths); return processId;
   }
   cancel(processId:string):boolean{ if(!this.workers.has(processId)&&!this.cancelled.has(processId))return false; this.cancelled.add(processId);
     this.workers.get(processId)?.postMessage({ type:'cancel' }); return true; }
-  hasActiveProcesses():boolean{return this.workers.size>0;}
+  hasActiveProcesses():boolean{return this.activeProcesses.size>0 || this.maintenance;}
 
   private getOrCreateReconciliation(request:ProcessMonthlyImportRequest):number{
     const service=new DatabaseService(this.databasePath); try{
-      const group=service.connection.prepare('SELECT id,active FROM concept_groups WHERE id=?').get(request.conceptGroupId) as { id:number;active:number }|undefined;
+      const group=service.connection.prepare("SELECT id,active FROM concept_groups WHERE id=? AND mapping_status='MAPPED' AND present_in_snapshot=1").get(request.conceptGroupId) as { id:number;active:number }|undefined;
       if(!group||!group.active)throw new Error('El grupo de conceptos seleccionado no está disponible.');
       const existing=service.connection.prepare(`SELECT id FROM monthly_reconciliations WHERE year=? AND month=? AND concept_group_id=?`)
         .get(request.year,request.month,request.conceptGroupId) as { id:number }|undefined;
@@ -32,18 +40,21 @@ export class ProcessingService {
       if(existing)return existing.id; const now=new Date().toISOString(); const id=Number(service.connection.prepare(`INSERT INTO monthly_reconciliations
         (year,month,concept_group_id,status,started_at,created_at,updated_at) VALUES (?,?,?,'DRAFT',?,?,?)`)
         .run(request.year,request.month,request.conceptGroupId,now,now,now).lastInsertRowid);
+      service.connection.prepare(`UPDATE monthly_reconciliations SET concept_group_code_snapshot=(SELECT code FROM concept_groups WHERE id=concept_group_id),
+        concept_group_name_snapshot=(SELECT name FROM concept_groups WHERE id=concept_group_id),catalog_provenance='CENTRAL_AT_CREATION' WHERE id=?`).run(id);
       this.audit(service,'CREATE',id,'Se creó el expediente mensual.',{ year:request.year,month:request.month,conceptGroupId:request.conceptGroupId }); return id;
     }finally{service.close();}
   }
 
   private async run(processId:string,reconciliationId:number,request:ProcessMonthlyImportRequest,paths:GroupPaths):Promise<void>{
-    const totalBytes=paths.files.reduce((sum,file)=>sum+statSync(file.filePath).size,0); let completedBytes=0; const completed={ lines:0,valid:0,excluded:0,invalid:0,matched:0 };
+    let totalBytes=0; let completedBytes=0; const completed={ lines:0,valid:0,excluded:0,invalid:0,matched:0 };
     const batchIds:number[]=[]; let monthlyReport='';
     try{
+      totalBytes=paths.files.reduce((sum,file)=>sum+statSync(file.filePath).size,0);
       for(let index=0;index<request.files.length;index+=1){ if(this.cancelled.has(processId))throw new Error('PROCESS_CANCELLED');
         const file=request.files[index]!; const source=paths.files[index]!;
         const result=await this.runWorker(processId,{ processId,reconciliationId,sourceOrder:this.nextSourceOrder(reconciliationId),databasePath:this.databasePath,
-          filePath:source.filePath,year:request.year,month:request.month,fortnight:file.fortnight,payrollTypeId:file.payrollTypeId,
+          filePath:source.filePath,year:request.year,month:request.month,fortnight:file.fortnight,payrollTypeId:file.payrollTypeId,catalogRevision:request.catalogRevision,
           selectedConceptIds:file.selectedConceptIds,retainedEmployeeNumbers:file.retainedEmployeeNumbers,missingAcknowledged:file.missingAcknowledged,
           replaceActiveBatch:file.replaceActiveBatch },(progress)=>{ const size=statSync(source.filePath).size; const aggregate:ProcessingProgress={ ...progress,reconciliationId,
             activeFileIndex:index+1,totalFiles:request.files.length,activeFilename:source.name,totalBytes,bytesProcessed:completedBytes+Math.min(progress.bytesProcessed,size),
@@ -58,11 +69,15 @@ export class ProcessingService {
           previousId=Number(batch.replaced_batch_id??0)||null; const now=new Date().toISOString(); service.connection.transaction(()=>{
             if(previousId)service.connection.prepare(`UPDATE payroll_batches SET is_active=0,status='SUPERSEDED',updated_at=? WHERE id=?`).run(now,previousId);
             service.connection.prepare(`UPDATE payroll_batches SET is_active=1,status='COMPLETED',completed_at=?,updated_at=? WHERE id=?`).run(now,now,result.batchId);
-            this.refresh(service,reconciliationId,true); })();
+            this.refresh(service,reconciliationId,true);
+            new SyncOutboxService(service.connection).stageResult(result.batchId); })();
           try{ monthlyReport=await new MonthlyReportBuilder(service.connection,paths.outputDirectory).build(reconciliationId); }
           catch(error){ service.connection.transaction(()=>{ service.connection.prepare(`UPDATE payroll_batches SET is_active=0,status='FAILED',updated_at=? WHERE id=?`)
               .run(new Date().toISOString(),result.batchId); if(previousId)service.connection.prepare(`UPDATE payroll_batches SET is_active=1,status='COMPLETED',updated_at=? WHERE id=?`)
-              .run(new Date().toISOString(),previousId); this.refresh(service,reconciliationId,false); })(); throw error; }
+              .run(new Date().toISOString(),previousId); this.refresh(service,reconciliationId,false);
+              new SyncOutboxService(service.connection).failLocalResult(result.batchId); })(); throw error; }
+          await new ResultPublicationService(service.connection, this.databasePath).capture(result.batchId);
+          new SyncOutboxService(service.connection).confirmLocalResult(result.batchId);
           this.audit(service,'IMPORT',reconciliationId,'Se actualizó el expediente mensual.',{ batchId:result.batchId,replacedBatchId:previousId });
         }catch(error){ const candidate=service.connection.prepare('SELECT is_active FROM payroll_batches WHERE id=?').get(result.batchId) as { is_active:number }|undefined;
           if(candidate&&!candidate.is_active)service.connection.prepare(`UPDATE payroll_batches SET status='FAILED',updated_at=? WHERE id=?`)
@@ -81,7 +96,7 @@ export class ProcessingService {
       this.getWindow()?.webContents.send('payroll:completed',result);
     }catch(error){ const message=this.friendly(error instanceof Error?error.message:'No se pudo actualizar el expediente mensual.');
       this.getWindow()?.webContents.send('payroll:failed',{ processId,reconciliationId,batchId:batchIds.at(-1)??null,message });
-    }finally{this.workers.delete(processId);this.cancelled.delete(processId);}
+    }finally{this.workers.delete(processId);this.cancelled.delete(processId);this.activeProcesses.delete(processId);this.onActivityChanged();}
   }
 
   private nextSourceOrder(reconciliationId:number):number{ const service=new DatabaseService(this.databasePath); try{return Number((service.connection.prepare(

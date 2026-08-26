@@ -1,7 +1,7 @@
 import { loginInputSchema } from '../../../shared/schemas/auth.js';
 import type { AuthStatus, LoginInput } from '../../../shared/types/auth.js';
 import type { CentralConfiguration } from '../../config/central.js';
-import { ApiClient, ApiError } from './ApiClient.js';
+import { ApiClient, ApiError, type ApiRequest, type ApiResponse, type UploadTransport } from './ApiClient.js';
 import type { DeviceService } from './DeviceService.js';
 import { SecureTokenError, type SecureTokenStore } from './SecureTokenStore.js';
 import { deviceResponseSchema, heartbeatResponseSchema, loginResponseSchema, logoutResponseSchema } from './contracts.js';
@@ -26,12 +26,14 @@ export class AuthService {
     device: IdentityStore;
     tokens: TokenStore;
     transport?: typeof fetch;
+    uploadTransport?: UploadTransport;
     onChanged?: (status: AuthStatus) => void;
   }) {
     const identity = options.device.getIdentity();
     const config = options.configuration.configured ? options.configuration.config : null;
     this.client = config ? new ApiClient({ ...config, isPackaged: options.isPackaged,
-      getToken: async () => this.token, ...(options.transport ? { transport: options.transport } : {}) }) : null;
+      getToken: async () => this.token, ...(options.transport ? { transport: options.transport } : {}),
+      ...(options.uploadTransport ? { uploadTransport: options.uploadTransport } : {}) }) : null;
     this.status = { state: config ? 'AUTH_REQUIRED' : 'UNCONFIGURED', busy: false,
       apiOrigin: config?.apiBaseUrl ?? null, appVersion: identity.appVersion, installationUuid: identity.installationUuid,
       deviceUuid: identity.deviceUuid, deviceName: identity.deviceName, lastSeenAt: identity.lastSeenAt,
@@ -40,6 +42,26 @@ export class AuthService {
   }
 
   getStatus(): AuthStatus { return { ...this.status }; }
+
+  getSessionGeneration(): number { return this.generation; }
+
+  /** Main-only transport capability. Neither this method nor the token crosses IPC. */
+  async requestAuthenticated<T>(request: ApiRequest<T>): Promise<ApiResponse<T>> {
+    if (!this.client || !this.token || this.disposed) throw new ApiError('AUTH_REQUIRED');
+    const generation = this.generation;
+    try {
+      const response = await this.client.requestWithMetadata({ ...request, authenticated: true });
+      if (generation !== this.generation || this.disposed) throw new ApiError('CANCELLED');
+      return response;
+    } catch (error) {
+      if (error instanceof ApiError && error.httpStatus === 401 && generation === this.generation) {
+        ++this.generation; this.token = null;
+        this.set({ state: 'AUTH_REQUIRED', message: error.message, errorCode: error.code });
+        await this.options.tokens.clear();
+      }
+      throw error;
+    }
+  }
 
   restore(): Promise<AuthStatus> {
     return this.run(async (signal) => {
@@ -56,7 +78,7 @@ export class AuthService {
       this.set({ message: 'Revisa el correo, la contraseña y el nombre del equipo.', errorCode: 'INVALID_INPUT' });
       return Promise.resolve(this.getStatus());
     }
-    const generation = this.generation;
+    const generation = ++this.generation;
     return this.run(async (signal) => {
       if (!this.client || !this.status.apiOrigin) return;
       this.options.tokens.requireEncryption();
@@ -79,7 +101,7 @@ export class AuthService {
         throw error;
       }
       if (generation !== this.generation || signal.aborted) throw new ApiError('CANCELLED');
-      this.set({ state: 'AUTHENTICATED', message: 'Equipo vinculado. La sincronización se incorporará en la siguiente fase.', errorCode: null });
+      this.set({ state: 'AUTHENTICATED', message: 'Equipo vinculado. Consulta el estado del catálogo antes de iniciar nuevas cargas.', errorCode: null });
     }, true).finally(() => { parsed.data.password = ''; });
   }
 

@@ -3,7 +3,7 @@ import { basename, join } from 'node:path';
 import type Database from 'better-sqlite3';
 import ExcelJS from 'exceljs';
 import { calculateFileSha256 } from './FileHashService.js';
-import { getMonthlyReportDirectory } from './ReportPathService.js';
+import { catalogPathSegment, getMonthlyReportDirectory } from './ReportPathService.js';
 
 interface ReconciliationRow { id:number; year:number; month:number; revision:number; total_amount_cents:number; group_code:string; group_name:string }
 type DataRow=Record<string,string|number|null>;
@@ -23,24 +23,24 @@ export class MonthlyReportBuilder {
   constructor(private readonly database:Database.Database,private readonly outputDirectory:string){}
 
   async build(reconciliationId:number):Promise<string>{
-    const rec=this.database.prepare(`SELECT mr.*,cg.code group_code,cg.name group_name FROM monthly_reconciliations mr
+    const rec=this.database.prepare(`SELECT mr.*,COALESCE(mr.concept_group_code_snapshot,cg.code) group_code,COALESCE(mr.concept_group_name_snapshot,cg.name) group_name FROM monthly_reconciliations mr
       JOIN concept_groups cg ON cg.id=mr.concept_group_id WHERE mr.id=?`).get(reconciliationId) as ReconciliationRow|undefined;
     if(!rec) throw new Error('No se encontró el expediente mensual.');
-    const batches=this.database.prepare(`SELECT pb.*,pt.code payroll_type_code,pt.name payroll_type_name FROM payroll_batches pb
+    const batches=this.database.prepare(`SELECT pb.*,COALESCE(pb.payroll_type_code_snapshot,pt.code) payroll_type_code,COALESCE(pb.payroll_type_name_snapshot,pt.name) payroll_type_name FROM payroll_batches pb
       JOIN payroll_types pt ON pt.id=pb.payroll_type_id WHERE pb.reconciliation_id=? AND pb.is_active=1 AND pb.status='COMPLETED'
       ORDER BY pb.fortnight,pt.name`).all(reconciliationId) as DataRow[];
-    const totals=this.database.prepare(`SELECT pb.fortnight,pt.code payroll_type_code,pt.name payroll_type_name,bt.* FROM batch_totals bt
+    const totals=this.database.prepare(`SELECT pb.fortnight,COALESCE(pb.payroll_type_code_snapshot,pt.code) payroll_type_code,COALESCE(pb.payroll_type_name_snapshot,pt.name) payroll_type_name,bt.* FROM batch_totals bt
       JOIN payroll_batches pb ON pb.id=bt.batch_id JOIN payroll_types pt ON pt.id=pb.payroll_type_id
       WHERE pb.reconciliation_id=? AND pb.is_active=1 AND pb.status='COMPLETED'
       ORDER BY pb.fortnight,pt.name,bt.source_key,bt.account_code,bt.concept_name`).all(reconciliationId) as DataRow[];
-    const retainedTotals=this.database.prepare(`SELECT pb.fortnight,pt.code payroll_type_code,pt.name payroll_type_name,rt.*
+    const retainedTotals=this.database.prepare(`SELECT pb.fortnight,COALESCE(pb.payroll_type_code_snapshot,pt.code) payroll_type_code,COALESCE(pb.payroll_type_name_snapshot,pt.name) payroll_type_name,rt.*
       FROM batch_retained_totals rt JOIN payroll_batches pb ON pb.id=rt.batch_id JOIN payroll_types pt ON pt.id=pb.payroll_type_id
       WHERE pb.reconciliation_id=? AND pb.is_active=1 AND pb.status='COMPLETED'
       ORDER BY pb.fortnight,pt.name,rt.source_key,rt.account_code,rt.concept_name,rt.employee_number`).all(reconciliationId) as DataRow[];
     const computed=totals.reduce((sum,row)=>sum+Number(row.total_amount_cents),0);
     if(computed!==rec.total_amount_cents) throw new Error(`El reporte mensual no concilia: diferencia ${rec.total_amount_cents-computed} centavos.`);
     const directory=getMonthlyReportDirectory(this.outputDirectory,rec.year,rec.month,rec.group_code); await fs.mkdir(directory,{ recursive:true });
-    const path=join(directory,`Totales_${rec.group_code}_${rec.year}_M${String(rec.month).padStart(2,'0')}.xlsx`);
+    const path=join(directory,`Totales_${catalogPathSegment(rec.group_code)}_${rec.year}_M${String(rec.month).padStart(2,'0')}.xlsx`);
     const temporary=`${path}.tmp-${process.pid}-${Date.now()}.xlsx`; const workbook=new ExcelJS.Workbook(); workbook.creator='SEFIPLAN Nómina';
     this.addSummary(workbook,rec,totals); this.addPayroll(workbook,rec,batches,totals); this.addGrouped(workbook,rec,totals);
     this.addRetainedSummary(workbook,rec,retainedTotals); this.addRetained(workbook,rec,reconciliationId);
@@ -136,7 +136,7 @@ export class MonthlyReportBuilder {
   private addRetained(workbook:ExcelJS.Workbook,rec:ReconciliationRow,reconciliationId:number):void{
     const sheet=workbook.addWorksheet('Retenidos',{ views:[{ state:'frozen',ySplit:4,showGridLines:false }] }); const headers=['Quincena','Tipo','Archivo','Empleado','Nombre','Movimientos retenidos'];
     title(sheet,'Empleados retenidos','Lista aplicada de forma independiente por TXT',headers.length); sheet.getRow(4).values=headers; header(sheet.getRow(4),headers.length);
-    const rows=this.database.prepare(`SELECT pb.fortnight,pt.name payroll_type,pb.original_filename,r.* FROM batch_retained_employees r JOIN payroll_batches pb ON pb.id=r.batch_id
+    const rows=this.database.prepare(`SELECT pb.fortnight,COALESCE(pb.payroll_type_name_snapshot,pt.name) payroll_type,pb.original_filename,r.* FROM batch_retained_employees r JOIN payroll_batches pb ON pb.id=r.batch_id
       JOIN payroll_types pt ON pt.id=pb.payroll_type_id WHERE pb.reconciliation_id=? AND pb.is_active=1 ORDER BY pb.fortnight,pt.name,r.employee_number`).all(reconciliationId) as DataRow[];
     for(const item of rows){ const row=sheet.addRow([`Q${String(item.fortnight).padStart(2,'0')}`,item.payroll_type,item.original_filename,item.employee_number,item.employee_name??'',item.found_records]); borders(row,headers.length); }
     if(!rows.length)sheet.addRow(['','','','','No se capturaron empleados retenidos.','']); sheet.autoFilter={ from:'A4',to:'F4' };

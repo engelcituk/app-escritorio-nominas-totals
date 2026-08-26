@@ -6,7 +6,7 @@ import { serializeImportRequest } from '../../src/renderer/utils/serializeImport
 describe('serialización de expedientes para Electron', () => {
   it('convierte los arreglos reactivos de conceptos en datos clonables', () => {
     const request: ProcessMonthlyImportRequest = {
-      reconciliationId: 4, year: 2026, month: 6, conceptGroupId: 1,
+      reconciliationId: 4, catalogRevision: 1, year: 2026, month: 6, conceptGroupId: 1,
       files: [{
         fileToken: '11111111-1111-4111-8111-111111111111',
         fortnight: 12,

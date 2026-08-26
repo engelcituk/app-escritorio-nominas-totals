@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { INITIAL_PAYROLL_TYPES } from '../../src/main/database/DatabaseService.js';
+import { INITIAL_PAYROLL_TYPES } from '../fixtures/legacy-catalog.mjs';
 
 describe('catálogo inicial de tipos de nómina', () => {
   it('siembra los 30 productos en el orden institucional', () => {

@@ -55,7 +55,7 @@ async function submit(): Promise<void> {
       <p v-if="waitingSeconds" class="form-text" role="status">Podrás volver a intentar en {{ waitingSeconds }} segundos.</p>
       <p v-if="auth.status?.state === 'UNCONFIGURED'" class="form-text">El acceso está deshabilitado hasta configurar el servidor en la aplicación de escritorio.</p>
     </form>
-    <p class="mt-4 mb-0 small">Fase 1: autenticación del equipo. La sincronización central aún no está disponible.</p>
+    <p class="mt-4 mb-0 small">Al iniciar sesión se verifica el catálogo central y se habilita la entrega de resultados y reportes pendientes. El trabajo local se conserva.</p>
     <RouterLink class="d-inline-block mt-3" to="/historico">Consultar histórico local</RouterLink>
   </section>
 </template>

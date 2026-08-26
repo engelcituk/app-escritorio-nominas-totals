@@ -43,6 +43,8 @@ export function parseRetryAfter(value: string | null, now = Date.now()): number 
   return Number.isFinite(date) ? Math.max(0, date - now) : null;
 }
 
+export interface UploadFile { path: string; sizeBytes: number; onProgress?: (bytes: number) => void }
+export type UploadTransport = (url: URL, headers: Record<string, string>, file: UploadFile, signal: AbortSignal) => Promise<Response>;
 export interface ApiRequest<T> {
   method?: 'GET' | 'POST' | 'DELETE';
   path: string;
@@ -50,6 +52,17 @@ export interface ApiRequest<T> {
   body?: unknown;
   authenticated?: boolean;
   signal?: AbortSignal;
+  ifNoneMatch?: string;
+  maximumResponseBytes?: number;
+  upload?: UploadFile;
+}
+
+export type ApiResponse<T> = { kind: 'data'; data: T; etag: string | null } | { kind: 'not-modified'; etag: string };
+
+// Compression proxies may weaken a strong ETag. GET cache validation uses weak
+// comparison; content integrity is verified separately against the snapshot hash.
+export function checksumFromEtag(etag: string | null): string | null {
+  return etag?.match(/^(?:W\/)?"([a-f0-9]{64})"$/)?.[1] ?? null;
 }
 
 /** Transport only: no application retries, SQL, UI, or body/header logging. */
@@ -66,6 +79,7 @@ export class ApiClient {
     getToken: () => Promise<string | null>;
     maximumResponseBytes?: number;
     transport?: typeof fetch;
+    uploadTransport?: UploadTransport;
   }) {
     this.origin = validateCentralUrl(options.apiBaseUrl, options.isPackaged, true);
     if (!Number.isInteger(options.requestTimeoutMs) || options.requestTimeoutMs < 1) throw new Error('Timeout inválido.');
@@ -76,6 +90,15 @@ export class ApiClient {
   }
 
   async request<T>(request: ApiRequest<T>): Promise<T> {
+    const response = await this.requestWithMetadata(request);
+    if (response.kind !== 'data') throw new ApiError('INVALID_RESPONSE', 304);
+    return response.data;
+  }
+
+  async requestWithMetadata<T>(request: ApiRequest<T>): Promise<ApiResponse<T>> {
+    const maximumBytes = request.maximumResponseBytes ?? this.maximumResponseBytes;
+    if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 1 || maximumBytes > 64 * 1024 * 1024) throw new ApiError('INVALID_ENDPOINT');
+    if (request.ifNoneMatch && (!checksumFromEtag(request.ifNoneMatch) || (request.method && request.method !== 'GET'))) throw new ApiError('INVALID_ENDPOINT');
     // Callers supply fixed service paths, never an arbitrary renderer URL.
     if (!/^\/api\/v1\/[a-zA-Z0-9/_-]+$/.test(request.path)) throw new ApiError('INVALID_ENDPOINT');
     const url = new URL(request.path, this.origin);
@@ -85,15 +108,19 @@ export class ApiClient {
     const cancel = () => controller.abort();
     request.signal?.addEventListener('abort', cancel, { once: true });
     if (request.signal?.aborted) controller.abort();
-    const timer = setTimeout(() => { timedOut = true; controller.abort(); }, this.timeoutMs);
+    if (request.upload && (request.method !== 'POST' || request.body !== undefined || !this.options.uploadTransport
+      || !/^\/api\/v1\/reports\/[a-f0-9-]{36}\/upload$/.test(request.path))) throw new ApiError('INVALID_ENDPOINT');
+    const timer = setTimeout(() => { timedOut = true; controller.abort(); }, request.upload ? 120_000 : this.timeoutMs);
     try {
       if (controller.signal.aborted) throw new ApiError('CANCELLED');
       const token = request.authenticated === false ? null : await this.options.getToken();
       if (request.authenticated !== false && !token) throw new ApiError('AUTH_REQUIRED');
       if (controller.signal.aborted) throw new ApiError(timedOut ? 'TIMEOUT' : 'CANCELLED');
-      const response = await this.transport(url, {
+      const response = request.upload ? await this.options.uploadTransport!(url, { Accept: 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}) }, request.upload, controller.signal) : await this.transport(url, {
         method: request.method ?? 'GET',
         headers: { Accept: 'application/json', ...(request.body === undefined ? {} : { 'Content-Type': 'application/json' }),
+          ...(request.ifNoneMatch ? { 'If-None-Match': request.ifNoneMatch } : {}),
           ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
         signal: controller.signal,
@@ -101,6 +128,12 @@ export class ApiClient {
         credentials: 'omit',
         cache: 'no-store',
       });
+      if (response.status === 304 && request.ifNoneMatch && !response.redirected) {
+        await response.body?.cancel();
+        const etag = response.headers.get('etag');
+        if (checksumFromEtag(etag) !== checksumFromEtag(request.ifNoneMatch)) throw new ApiError('INVALID_RESPONSE', 304);
+        return { kind: 'not-modified', etag: etag! };
+      }
       if (response.redirected || (response.status >= 300 && response.status < 400)) {
         await response.body?.cancel();
         throw new ApiError('REDIRECT_REJECTED', response.status);
@@ -118,14 +151,14 @@ export class ApiClient {
           await response.body?.cancel();
           throw new ApiError('INVALID_RESPONSE', response.status);
         }
-        value = JSON.parse(await this.readBody(response)) as unknown;
+        value = JSON.parse(await this.readBody(response, maximumBytes)) as unknown;
       }
       const parsed = request.schema.safeParse(value);
       if (!parsed.success) throw new ApiError('INVALID_RESPONSE', response.status);
-      return parsed.data;
+      return { kind: 'data', data: parsed.data, etag: response.headers.get('etag') };
     } catch (error) {
-      if (error instanceof ApiError) throw error;
       if (timedOut) throw new ApiError('TIMEOUT');
+      if (error instanceof ApiError) throw error;
       if (controller.signal.aborted) throw new ApiError('CANCELLED');
       if (error instanceof SyntaxError) throw new ApiError('INVALID_RESPONSE');
       throw new ApiError(isTlsError(error) ? 'TLS_ERROR' : 'NETWORK_ERROR');
@@ -135,9 +168,9 @@ export class ApiClient {
     }
   }
 
-  private async readBody(response: Response): Promise<string> {
+  private async readBody(response: Response, maximumBytes: number): Promise<string> {
     const announcedLength = Number(response.headers.get('content-length'));
-    if (announcedLength > this.maximumResponseBytes) {
+    if (announcedLength > maximumBytes) {
       await response.body?.cancel();
       throw new ApiError('RESPONSE_TOO_LARGE', response.status);
     }
@@ -150,7 +183,7 @@ export class ApiClient {
         const next = await reader.read();
         if (next.done) break;
         length += next.value.byteLength;
-        if (length > this.maximumResponseBytes) {
+        if (length > maximumBytes) {
           await reader.cancel();
           throw new ApiError('RESPONSE_TOO_LARGE', response.status);
         }

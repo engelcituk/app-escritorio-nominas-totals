@@ -12,6 +12,20 @@ function client(transport: typeof fetch, maximumResponseBytes?: number) {
 }
 
 describe('ApiClient', () => {
+  it('304 solo admite petición condicional con ETag idéntico y no requiere JSON', async () => {
+    const etag = `"${'a'.repeat(64)}"`;
+    const transport = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 304, headers: { ETag: etag } }));
+    expect(await client(transport).requestWithMetadata({ path, schema, ifNoneMatch: etag })).toEqual({ kind: 'not-modified', etag });
+    expect(transport.mock.calls[0]?.[1]?.headers).toHaveProperty('If-None-Match', etag);
+    const weak = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 304, headers: { ETag: `W/${etag}` } }));
+    expect(await client(weak).requestWithMetadata({ path, schema, ifNoneMatch: etag })).toEqual({ kind: 'not-modified', etag: `W/${etag}` });
+    for (const headers of [{}, { ETag: `"${'b'.repeat(64)}"` }]) {
+      const mismatch = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 304, headers }));
+      await expect(client(mismatch).requestWithMetadata({ path, schema, ifNoneMatch: etag })).rejects.toMatchObject({ code: 'INVALID_RESPONSE' });
+    }
+    await expect(client(transport).request({ path, schema })).rejects.toBeInstanceOf(ApiError);
+  });
+
   it('agrega bearer solo en main, desactiva redirects/cookies y valida la respuesta', async () => {
     const transport = vi.fn<typeof fetch>().mockResolvedValue(json({ accepted: true }));
     expect(await client(transport).request({ path, schema, method: 'POST', body: { value: 1 } })).toEqual({ accepted: true });

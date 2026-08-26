@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { AuthService } from '../../src/main/services/central/AuthService.js';
 import { parseCentralConfig } from '../../src/main/config/central.js';
 import { SecureTokenError } from '../../src/main/services/central/SecureTokenStore.js';
+import { z } from 'zod';
 
 const installationUuid = '11111111-1111-4111-8111-111111111111';
 const deviceUuid = '22222222-2222-4222-8222-222222222222';
@@ -39,6 +40,13 @@ function setup() {
 }
 
 describe('AuthService · contrato Laravel y ciclo de sesión', () => {
+  it('un 401 del catálogo invalida la sesión aunque falle la limpieza del almacén', async () => {
+    const { auth, tokens, transport } = setup(); await auth.login(credentials);
+    transport.mockResolvedValueOnce(json({}, 401)); tokens.clear.mockRejectedValueOnce(new Error('storage unavailable'));
+    await expect(auth.requestAuthenticated({ path: '/api/v1/catalogs/manifest', schema: z.object({}) })).rejects.toThrow();
+    expect(auth.getStatus().state).toBe('AUTH_REQUIRED');
+    await expect(auth.requestAuthenticated({ path: '/api/v1/catalogs/manifest', schema: z.object({}) })).rejects.toMatchObject({ code: 'AUTH_REQUIRED' });
+  });
   it('envía el contrato real, cifra el token y solo publica DTO sin secretos', async () => {
     const { auth, tokens, transport, onChanged } = setup();
     const status = await auth.login(credentials);

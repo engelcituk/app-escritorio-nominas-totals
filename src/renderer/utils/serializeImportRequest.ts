@@ -2,6 +2,7 @@ import type { ProcessMonthlyImportRequest } from '../../shared/types/payroll.js'
 
 export function serializeImportRequest(request: ProcessMonthlyImportRequest): ProcessMonthlyImportRequest {
   return {
+    catalogRevision: request.catalogRevision,
     year: request.year, month: request.month, conceptGroupId: request.conceptGroupId,
     files: request.files.map((file) => ({
       fileToken: file.fileToken,

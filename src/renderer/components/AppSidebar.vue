@@ -6,6 +6,7 @@ const entries = [
   ['/', 'bi-house-door', 'Inicio'], ['/importar', 'bi-calendar2-check', 'Expedientes mensuales'],
   ['/historico', 'bi-clock-history', 'Histórico mensual'], ['/consolidado', 'bi-table', 'Consolidado mensual'],
   ['/matriz-anual', 'bi-calendar3', 'Matriz anual'], ['/catalogo-conceptos', 'bi-journal-check', 'Catálogo de conceptos'],
+  ['/sincronizacion', 'bi-arrow-repeat', 'Sincronización'],
   ['/documentacion', 'bi-book', 'Documentación'], ['/configuracion', 'bi-gear', 'Configuración'],
   ['/respaldos', 'bi-shield-check', 'Respaldos'],
 ] as const;

@@ -10,6 +10,7 @@ const importFileSchema = z.object({
 });
 
 export const processMonthlyImportRequestSchema = z.object({
+  catalogRevision: z.number().int().nonnegative(),
   reconciliationId: z.number().int().positive().optional(), year: z.number().int().min(2000).max(2200),
   month: z.number().int().min(1).max(12), conceptGroupId: z.number().int().positive(), files: z.array(importFileSchema).min(1).max(100),
   exportDirectoryToken: z.string().uuid().optional(),
@@ -26,14 +27,6 @@ export const processMonthlyImportRequestSchema = z.object({
 
 export const retainedValidationSchema = z.object({ files: z.array(importFileSchema.pick({ fileToken: true, payrollTypeId: true,
   selectedConceptIds: true, retainedEmployeeNumbers: true })).min(1).max(100) });
-export const conceptGroupDraftSchema = z.object({ id: z.number().int().positive().optional(), code: z.string().trim().regex(/^[A-Z0-9_]+$/).max(60),
-  name: z.string().trim().min(2).max(120), active: z.boolean() });
-export const payrollConceptDraftSchema = z.object({ id: z.number().int().positive().optional(), code: z.string().trim().regex(/^[A-Z0-9_]+$/).max(80),
-  name: z.string().trim().min(2).max(180), groupId: z.number().int().positive().nullable(), operationFactor: z.union([z.literal(1), z.literal(-1)]),
-  active: z.boolean(), sourceDescription: z.string().trim().min(2).max(220).optional() });
-export const conceptAliasDraftSchema = z.object({ conceptId: z.number().int().positive(), sourceDescription: z.string().trim().min(2).max(220) });
-export const payrollTypeDraftSchema = z.object({ id: z.number().int().positive().optional(), code: z.string().trim().regex(/^[A-Z0-9_]+$/).max(60),
-  name: z.string().trim().min(2).max(120), active: z.boolean() });
 export const monthlyReconciliationKeySchema = z.object({ year: z.number().int().min(2000).max(2200), month: z.number().int().min(1).max(12),
   conceptGroupId: z.number().int().positive() });
 export const historyQuerySchema = z.object({ page: z.number().int().min(1).default(1), pageSize: z.number().int().min(10).max(100).default(25),

@@ -1,11 +1,21 @@
 import type { HistoryQuery } from '../schemas/ipc.js';
 import type { AuthStatus, LoginInput } from './auth.js';
-import type { BatchSummary, ConceptAliasDraft, ConceptGroup, ConceptGroupDraft, MonthlyReconciliationResult,
-  MonthlyReconciliationSummary, PayrollConcept, PayrollConceptDraft, PayrollTypeDraft, PayrollTypeSummary,
+import type { CatalogAliasEntry, CatalogConflict, CatalogEntry, CatalogPage, CatalogQuery, CatalogStatus } from './catalog.js';
+import type { SyncDetail, SyncEntry, SyncQuery, SyncStatus, SyncRemoteHistory } from './sync.js';
+import type { BatchSummary, ConceptGroup, MonthlyReconciliationResult,
+  MonthlyReconciliationSummary, PayrollTypeSummary,
   PreflightResult, ProcessMonthlyImportRequest, ProcessingProgress,
   RetainedValidationResult, SelectedFile } from './payroll.js';
 
 export interface SefiplanApi {
+  sync: {
+    remoteHistory(query: { operationUuid: string }): Promise<SyncRemoteHistory>;
+    status(): Promise<SyncStatus>; run(): Promise<SyncStatus>; checkConnection(): Promise<SyncStatus>;
+    list(query: SyncQuery): Promise<{ items: SyncEntry[]; total: number }>;
+    detail(query: { operationUuid: string }): Promise<SyncDetail | null>;
+    retry(query: { operationUuid: string }): Promise<SyncStatus>;
+    onChanged(callback: (status: SyncStatus) => void): () => void;
+  };
   auth: {
     login(input: LoginInput): Promise<AuthStatus>;
     logout(): Promise<AuthStatus>;
@@ -14,6 +24,15 @@ export interface SefiplanApi {
     onChanged(callback: (status: AuthStatus) => void): () => void;
   };
   openBackoffice(): Promise<void>;
+  catalog: {
+    status(): Promise<CatalogStatus>;
+    synchronize(): Promise<CatalogStatus>;
+    onChanged(callback: (status: CatalogStatus) => void): () => void;
+    list(query: CatalogQuery): Promise<CatalogPage<CatalogEntry>>;
+    aliases(query: { id: number; page: number }): Promise<CatalogPage<CatalogAliasEntry>>;
+    conflicts(query: { page: number }): Promise<CatalogPage<CatalogConflict>>;
+    exportConflicts(): Promise<{ path: string } | null>;
+  };
   selectTxtFiles(): Promise<SelectedFile[]>;
   inspectTxtFile(payload: { fileToken: string; includePreview: boolean }): Promise<PreflightResult>;
   selectExportDirectory(): Promise<{ token: string; name: string } | null>;
@@ -29,12 +48,7 @@ export interface SefiplanApi {
   openReportFolder(batchId: number): Promise<boolean>;
   openMonthlyReportFolder(reconciliationId: number): Promise<boolean>;
   getPayrollTypes(includeInactive?: boolean): Promise<PayrollTypeSummary[]>;
-  savePayrollType(payload: PayrollTypeDraft): Promise<number>;
-  getConceptCatalog(): Promise<{ groups: ConceptGroup[]; concepts: PayrollConcept[] }>;
-  saveConceptGroup(payload: ConceptGroupDraft): Promise<number>;
-  savePayrollConcept(payload: PayrollConceptDraft): Promise<number>;
-  addConceptAlias(payload: ConceptAliasDraft): Promise<number>;
-  removeConceptAlias(aliasId: number): Promise<void>;
+  getConceptGroups(): Promise<ConceptGroup[]>;
   createBackup(): Promise<{ path: string } | null>;
   restoreBackup(): Promise<{ restored: boolean; automaticBackupPath: string } | null>;
   getSettings(): Promise<Record<string, string>>;

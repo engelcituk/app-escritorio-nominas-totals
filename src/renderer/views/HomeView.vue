@@ -12,6 +12,6 @@ import PageHeader from '../components/PageHeader.vue';
   <div class="home-links">
     <RouterLink to="/historico"><i class="bi bi-clock-history" aria-hidden="true" /><span><strong>Consultar histórico</strong><small>Busca lotes, reportes y versiones anteriores.</small></span><i class="bi bi-chevron-right" aria-hidden="true" /></RouterLink>
     <RouterLink to="/consolidado"><i class="bi bi-table" aria-hidden="true" /><span><strong>Consolidado mensual</strong><small>Revisa el total vigente por mes y grupo.</small></span><i class="bi bi-chevron-right" aria-hidden="true" /></RouterLink>
-    <RouterLink to="/catalogo-conceptos"><i class="bi bi-journal-check" aria-hidden="true" /><span><strong>Administrar conceptos</strong><small>Consulta operaciones, grupos y alias reconocidos.</small></span><i class="bi bi-chevron-right" aria-hidden="true" /></RouterLink>
+    <RouterLink to="/catalogo-conceptos"><i class="bi bi-journal-check" aria-hidden="true" /><span><strong>Consultar catálogo</strong><small>Consulta operaciones, grupos y alias reconocidos.</small></span><i class="bi bi-chevron-right" aria-hidden="true" /></RouterLink>
   </div>
 </template>

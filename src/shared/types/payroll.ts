@@ -14,19 +14,13 @@ export interface PayrollConcept {
   id: number; code: string; name: string; groupId: number | null; groupName: string | null;
   operationFactor: 1 | -1; active: boolean; aliases: ConceptAlias[];
 }
-export interface ConceptGroupDraft { id?: number; code: string; name: string; active: boolean }
-export interface PayrollConceptDraft {
-  id?: number; code: string; name: string; groupId: number | null; operationFactor: 1 | -1; active: boolean;
-  sourceDescription?: string;
-}
 export interface PayrollTypeSummary { id: number; code: string; name: string; active: boolean; used: boolean }
-export interface PayrollTypeDraft { id?: number | undefined; code: string; name: string; active: boolean }
-export interface ConceptAliasDraft { conceptId: number; sourceDescription: string }
 export interface DetectedConcept {
   key: string; sourceDescription: string; normalizedDescription: string; conceptCodes: string[]; movementTypes: string[];
   recordCount: number; originalAmountCents: number; catalogConcept: Omit<PayrollConcept, 'aliases'> | null;
 }
 export interface PreflightResult {
+  catalogRevision?: number | null;
   file: SelectedFile; fileHashSha256: string; historicalDuplicateBatchId: number | null; delimiter: '|'; columnCount: number;
   layoutCode: string; layoutVersion: number; encoding: 'UTF-8'; totalLines: number; sampleSize: number;
   validPercentage: number; canProcess: boolean; preview: PreviewRecord[]; detectedConcepts: DetectedConcept[];
@@ -39,6 +33,7 @@ export interface ImportFileRequest {
   retainedEmployeeNumbers: string[]; missingAcknowledged: boolean; replaceActiveBatch: boolean;
 }
 export interface ProcessMonthlyImportRequest {
+  catalogRevision: number;
   reconciliationId?: number | undefined; year: number; month: number; conceptGroupId: number; files: ImportFileRequest[];
   exportDirectoryToken?: string | undefined;
 }

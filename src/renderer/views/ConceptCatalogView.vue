@@ -1,66 +1,78 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue';
-import type { ConceptGroup, PayrollConcept } from '@shared/types/payroll';
-import { canonicalizeConceptDescription } from '@shared/utils/normalization';
-import EmptyState from '../components/EmptyState.vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { useRoute } from 'vue-router';
+import type { CatalogAliasEntry, CatalogConflict, CatalogEntry, CatalogQuery } from '@shared/types/catalog';
 import PageHeader from '../components/PageHeader.vue';
+import CatalogStatusPanel from '../components/CatalogStatusPanel.vue';
+import { useCatalogStore } from '../stores/catalog';
 import { errorMessage } from '../utils/errorMessage';
+const route = useRoute(); const catalog = useCatalogStore();
+const entity = ref<CatalogQuery['entity'] | 'conflicts'>(route.query.entity === 'types' ? 'types' : 'concepts');
+const search = ref(''); const filter = ref<CatalogQuery['filter']>('all'); const page = ref(1); const pageSize = ref(25);
+const items = ref<CatalogEntry[]>([]); const conflicts = ref<CatalogConflict[]>([]); const total = ref(0);
+const loading = ref(false); const error = ref(''); const selected = ref<CatalogEntry | null>(null);
+const exporting = ref(false); const exportMessage = ref('');
+const aliases = ref<CatalogAliasEntry[]>([]); const aliasPage = ref(1); const aliasTotal = ref(0); const aliasLoading = ref(false);
+let sequence = 0; let aliasSequence = 0; let timer: ReturnType<typeof setTimeout> | undefined;
+const pages = computed(() => Math.max(1, Math.ceil(total.value / (entity.value === 'conflicts' ? 25 : pageSize.value))));
+async function load(): Promise<void> {
+  const request = ++sequence; loading.value = true; error.value = '';
+  try {
+    const response = entity.value === 'conflicts' ? await window.sefiplanApi.catalog.conflicts({ page: page.value })
+      : await window.sefiplanApi.catalog.list({ entity: entity.value, page: page.value, pageSize: pageSize.value, search: search.value, filter: filter.value });
+    if (request !== sequence) return;
+    total.value = response.total;
+    if (entity.value === 'conflicts') conflicts.value = response.items as CatalogConflict[]; else items.value = response.items as CatalogEntry[];
+  } catch (cause) { if (request === sequence) error.value = errorMessage(cause, 'No se pudo consultar el catálogo.'); }
+  finally { if (request === sequence) loading.value = false; }
+}
+async function loadAliases(): Promise<void> {
+  const request = ++aliasSequence; if (!selected.value) return; aliasLoading.value = true;
+  try { const response = await window.sefiplanApi.catalog.aliases({ id: selected.value.id, page: aliasPage.value });
+    if (request === aliasSequence) { aliases.value = response.items; aliasTotal.value = response.total; }
+  } catch (cause) { if (request === aliasSequence) error.value = errorMessage(cause, 'No se pudieron consultar los alias.'); }
+  finally { if (request === aliasSequence) aliasLoading.value = false; }
+}
+function select(item: CatalogEntry): void { selected.value = item; aliasPage.value = 1; aliases.value = []; aliasTotal.value = 0; void loadAliases(); }
+async function exportConflicts(): Promise<void> {
+  exporting.value = true; exportMessage.value = ''; error.value = '';
+  try { const result = await window.sefiplanApi.catalog.exportConflicts(); if (result) exportMessage.value = `Diagnóstico exportado: ${result.path}`; }
+  catch (cause) { error.value = errorMessage(cause, 'No se pudo exportar el diagnóstico.'); }
+  finally { exporting.value = false; }
+}
 
-const groups = ref<ConceptGroup[]>([]); const concepts = ref<PayrollConcept[]>([]); const loading = ref(true); const saving = ref(false);
-const error = ref(''); const success = ref(''); const search = ref(''); const aliasText = ref(''); const selectedId = ref<number | null>(null);
-const conceptDraft = reactive({ id: undefined as number | undefined, code: '', name: '', groupId: null as number | null,
-  operationFactor: 1 as 1 | -1, active: true });
-const groupDraft = reactive({ id: undefined as number | undefined, code: '', name: '', active: true });
-const filtered = computed(() => { const q = canonicalizeConceptDescription(search.value); return concepts.value.filter((concept) =>
-  !q || canonicalizeConceptDescription(`${concept.name} ${concept.code} ${concept.groupName ?? ''} ${concept.aliases.map((a) => a.sourceDescription).join(' ')}`).includes(q)); });
-const selected = computed(() => concepts.value.find((concept) => concept.id === selectedId.value) ?? null);
-
-async function load(): Promise<void> { loading.value = true; try { const catalog = await window.sefiplanApi.getConceptCatalog(); groups.value = catalog.groups; concepts.value = catalog.concepts; }
-  catch (cause) { error.value = errorMessage(cause, 'No se pudo consultar el catálogo.'); } finally { loading.value = false; } }
-onMounted(load);
-function edit(concept: PayrollConcept): void { selectedId.value = concept.id; Object.assign(conceptDraft, { id: concept.id, code: concept.code,
-  name: concept.name, groupId: concept.groupId, operationFactor: concept.operationFactor, active: concept.active }); }
-function clearConcept(): void { selectedId.value = null; aliasText.value = ''; Object.assign(conceptDraft, { id: undefined, code: '', name: '', groupId: null, operationFactor: 1, active: true }); }
-async function saveConcept(): Promise<void> { saving.value = true; error.value = ''; try { const id = await window.sefiplanApi.savePayrollConcept({
-  ...(conceptDraft.id ? { id: conceptDraft.id } : {}), code: conceptDraft.code, name: conceptDraft.name, groupId: conceptDraft.groupId,
-  operationFactor: conceptDraft.operationFactor, active: conceptDraft.active });
-  success.value = 'Concepto guardado. Los lotes anteriores conservarán su fotografía.'; await load(); const found = concepts.value.find((item) => item.id === id); if (found) edit(found); }
-  catch (cause) { error.value = errorMessage(cause, 'No se pudo guardar el concepto.'); } finally { saving.value = false; } }
-function editGroup(group: ConceptGroup): void { Object.assign(groupDraft, group); }
-function clearGroup(): void { Object.assign(groupDraft, { id: undefined, code: '', name: '', active: true }); }
-async function saveGroup(): Promise<void> { saving.value = true; error.value = ''; try { await window.sefiplanApi.saveConceptGroup({
-  ...(groupDraft.id ? { id: groupDraft.id } : {}), code: groupDraft.code, name: groupDraft.name, active: groupDraft.active }); success.value = 'Grupo guardado.';
-  clearGroup(); await load(); } catch (cause) { error.value = errorMessage(cause, 'No se pudo guardar el grupo.'); } finally { saving.value = false; } }
-async function addAlias(): Promise<void> { if (!selected.value || !aliasText.value.trim()) return; saving.value = true; error.value = '';
-  try { await window.sefiplanApi.addConceptAlias({ conceptId: selected.value.id, sourceDescription: aliasText.value }); aliasText.value = '';
-    success.value = 'Alias añadido.'; await load(); } catch (cause) { error.value = errorMessage(cause, 'No se pudo añadir el alias.'); } finally { saving.value = false; } }
-async function removeAlias(id: number): Promise<void> { try { await window.sefiplanApi.removeConceptAlias(id); success.value = 'Alias desactivado.'; await load(); }
-  catch (cause) { error.value = errorMessage(cause, 'No se pudo desactivar el alias.'); } }
+watch([entity, search, filter, pageSize, () => catalog.status?.syncedAt], () => {
+  ++sequence; ++aliasSequence; selected.value = null; page.value = 1; clearTimeout(timer); loading.value = true; timer = setTimeout(() => { void load(); }, 200);
+}, { immediate: true });
+watch(page, () => { clearTimeout(timer); void load(); });
+watch(aliasPage, () => { void loadAliases(); });
+onBeforeUnmount(() => { ++sequence; ++aliasSequence; clearTimeout(timer); });
 </script>
-
 <template>
-  <PageHeader title="Catálogo de conceptos" description="Administra los conceptos disponibles, su operación, grupo y descripciones reconocidas." />
-  <div v-if="error" class="alert alert-danger" role="alert">{{ error }}</div><div v-if="success" class="alert alert-success" role="status">{{ success }}</div>
-  <div v-if="loading" class="inline-loading" role="status"><span class="spinner-border spinner-border-sm" /> Cargando catálogo…</div>
-  <div v-else class="catalog-layout">
-    <section class="catalog-panel" aria-labelledby="concept-list-title"><div class="catalog-panel__header"><div><span class="eyebrow">{{ concepts.length }} conceptos</span><h2 id="concept-list-title">Conceptos de nómina</h2></div><button class="btn btn-primary btn-sm" type="button" @click="clearConcept"><i class="bi bi-plus-lg" /> Nuevo concepto</button></div>
-      <label class="visually-hidden" for="catalog-search">Buscar conceptos</label><input id="catalog-search" v-model="search" class="form-control mb-3" placeholder="Buscar por nombre, código, grupo o alias" />
-      <EmptyState v-if="!filtered.length" title="Sin resultados" description="Prueba con otro término de búsqueda." icon="bi-search" />
-      <div v-else class="catalog-list"><button v-for="concept in filtered" :key="concept.id" class="catalog-list__item" :class="{ active: selectedId === concept.id }" type="button" @click="edit(concept)"><span><strong>{{ concept.name }}</strong><small>{{ concept.code }} · {{ concept.groupName || 'Sin grupo' }}</small></span><span class="catalog-operation" :class="concept.operationFactor === -1 ? 'subtract' : 'add'">{{ concept.operationFactor === -1 ? 'Resta' : 'Suma' }}</span></button></div>
-    </section>
-    <section class="catalog-editor" aria-labelledby="concept-editor-title"><h2 id="concept-editor-title">{{ conceptDraft.id ? 'Editar concepto' : 'Nuevo concepto' }}</h2>
-      <form class="row g-3" @submit.prevent="saveConcept"><div class="col-md-5"><label class="form-label" for="concept-code">Código estable</label><input id="concept-code" v-model.trim="conceptDraft.code" class="form-control" pattern="[A-Z0-9_]+" required :disabled="Boolean(conceptDraft.id)" /></div>
-        <div class="col-md-7"><label class="form-label" for="concept-name">Nombre</label><input id="concept-name" v-model.trim="conceptDraft.name" class="form-control" required /></div>
-        <div class="col-md-5"><label class="form-label" for="concept-group">Grupo</label><select id="concept-group" v-model="conceptDraft.groupId" class="form-select"><option :value="null">Sin grupo</option><option v-for="group in groups.filter(g => g.active)" :key="group.id" :value="group.id">{{ group.name }}</option></select></div>
-        <div class="col-md-4"><label class="form-label" for="concept-operation">Operación</label><select id="concept-operation" v-model.number="conceptDraft.operationFactor" class="form-select"><option :value="1">Suma</option><option :value="-1">Resta</option></select></div>
-        <div class="col-md-3 d-flex align-items-end"><label class="form-check"><input v-model="conceptDraft.active" class="form-check-input" type="checkbox" /><span>Activo</span></label></div>
-        <div class="col-12 text-end"><button class="btn btn-primary" type="submit" :disabled="saving">Guardar concepto</button></div></form>
-      <div v-if="selected" class="alias-editor"><h3>Descripciones reconocidas</h3><p>La coincidencia ignora mayúsculas, acentos y espacios repetidos.</p>
-        <ul class="alias-list"><li v-for="alias in selected.aliases.filter(a => a.active)" :key="alias.id"><span>{{ alias.sourceDescription }}</span><button class="btn btn-link btn-sm text-danger" type="button" @click="removeAlias(alias.id)">Desactivar</button></li></ul>
-        <form class="input-group" @submit.prevent="addAlias"><label class="visually-hidden" for="alias">Nuevo alias</label><input id="alias" v-model.trim="aliasText" class="form-control" placeholder="Descripción exacta del TXT" required /><button class="btn btn-outline-primary" type="submit" :disabled="saving">Añadir alias</button></form></div>
-      <div class="group-editor"><div class="d-flex justify-content-between align-items-center"><h3>{{ groupDraft.id ? 'Editar grupo' : 'Nuevo grupo' }}</h3><button v-if="groupDraft.id" class="btn btn-link btn-sm" type="button" @click="clearGroup">Cancelar edición</button></div>
-        <div class="d-flex gap-2 flex-wrap mb-3"><button v-for="group in groups" :key="group.id" class="btn btn-sm" :class="group.active ? 'btn-outline-secondary' : 'btn-outline-danger'" type="button" @click="editGroup(group)">{{ group.name }}{{ group.active ? '' : ' · Inactivo' }}</button></div>
-        <form class="row g-2" @submit.prevent="saveGroup"><div class="col-md-3"><input v-model.trim="groupDraft.code" class="form-control" placeholder="CÓDIGO" pattern="[A-Z0-9_]+" required :disabled="Boolean(groupDraft.id)" /></div><div class="col-md-5"><input v-model.trim="groupDraft.name" class="form-control" placeholder="Nombre del grupo" required /></div><div class="col-md-2 d-flex align-items-center"><label class="form-check"><input v-model="groupDraft.active" class="form-check-input" type="checkbox" /><span>Activo</span></label></div><div class="col-md-2"><button class="btn btn-outline-primary w-100" type="submit" :disabled="saving">Guardar</button></div></form></div>
-    </section>
+  <PageHeader title="Catálogo central" description="Consulta la réplica local, sus UUID y los registros pendientes de vincular. Las modificaciones se realizan en Laravel." />
+  <CatalogStatusPanel />
+  <div v-if="entity === 'conflicts'" class="mb-3"><p>Los registros sin enlace central no se usan en nuevos procesamientos. Solicita su registro o revisión en la administración central.</p><button class="btn btn-outline-primary" type="button" :disabled="exporting || loading || !total" @click="exportConflicts">{{ exporting ? 'Exportando…' : 'Exportar diagnóstico JSON' }}</button><p v-if="exportMessage" class="mt-2" role="status">{{ exportMessage }}</p></div>
+  <div v-if="error" class="alert alert-danger" role="alert">{{ error }} <button class="btn btn-outline-danger btn-sm" type="button" @click="load">Reintentar</button></div>
+  <div class="row g-3 mb-3">
+    <div class="col-md-3"><label for="catalog-entity" class="form-label">Catálogo</label><select id="catalog-entity" v-model="entity" class="form-select"><option value="concepts">Conceptos</option><option value="groups">Grupos</option><option value="types">Tipos de nómina</option><option value="conflicts">Diagnóstico de vinculación</option></select></div>
+    <template v-if="entity !== 'conflicts'"><div class="col-md-5"><label for="catalog-search" class="form-label">Buscar por código, nombre o alias</label><input id="catalog-search" v-model="search" class="form-control" type="search" maxlength="120" /></div>
+      <div class="col-md-2"><label for="catalog-filter" class="form-label">Estado</label><select id="catalog-filter" v-model="filter" class="form-select"><option value="all">Todos</option><option value="active">Activos centrales</option><option value="inactive">Inactivos</option><option value="legacy">Sin enlace central</option></select></div>
+      <div class="col-md-2"><label for="catalog-size" class="form-label">Filas</label><select id="catalog-size" v-model.number="pageSize" class="form-select"><option :value="25">25</option><option :value="50">50</option><option :value="100">100</option></select></div></template>
   </div>
+  <div :aria-busy="loading">
+    <p v-if="loading" role="status">Consultando registros…</p>
+    <p v-else-if="!total" class="border rounded p-4" role="status">Sin registros para esta consulta. Si aún no existe una copia central, inicia sesión y sincroniza el catálogo.</p>
+    <div v-else class="table-responsive"><table class="table table-striped align-middle"><caption>{{ total }} registros · Página {{ page }} de {{ pages }}</caption>
+      <template v-if="entity === 'conflicts'"><thead><tr><th scope="col">Entidad / ID local</th><th scope="col">Código</th><th scope="col">Diagnóstico</th></tr></thead><tbody><tr v-for="item in conflicts" :key="item.id"><td>{{ item.entityType }} / {{ item.localId }}</td><td>{{ item.code || '—' }}</td><td>{{ item.description }}</td></tr></tbody></template>
+      <template v-else><thead><tr><th scope="col">Código / UUID</th><th scope="col">Nombre</th><th scope="col">Estado</th><th v-if="entity === 'concepts'" scope="col">Grupo / Operación</th><th v-if="entity === 'concepts'" scope="col">Alias</th></tr></thead>
+        <tbody><tr v-for="item in items" :key="item.id"><td><strong>{{ item.code }}</strong><small class="d-block text-break">{{ item.uuid || `Local #${item.id}` }}</small></td><td>{{ item.name }}</td><td><span :class="item.mappingStatus === 'LEGACY_UNMAPPED' ? 'badge text-bg-warning' : ''">{{ item.mappingStatus === 'LEGACY_UNMAPPED' ? 'Sin enlace central' : item.active ? 'Activo' : 'Inactivo' }}</span></td><td v-if="entity === 'concepts'">{{ item.groupName || 'Sin grupo' }} · {{ item.operationFactor === -1 ? 'Resta' : 'Suma' }}</td><td v-if="entity === 'concepts'"><button class="btn btn-outline-secondary btn-sm" type="button" :disabled="loading" :aria-label="`Consultar alias de ${item.name}`" @click="select(item)">{{ item.aliasCount }} · Ver alias</button></td></tr></tbody></template>
+    </table></div>
+    <nav class="d-flex gap-3 align-items-center mb-4" aria-label="Paginación del catálogo"><button class="btn btn-outline-secondary" type="button" :disabled="loading || page <= 1" @click="page--">Anterior</button><span aria-live="polite">Página {{ page }} de {{ pages }}</span><button class="btn btn-outline-secondary" type="button" :disabled="loading || page >= pages" @click="page++">Siguiente</button></nav>
+  </div>
+  <section v-if="selected && entity === 'concepts'" class="border rounded p-3" aria-label="Detalle de alias" :aria-busy="aliasLoading">
+    <h2 class="h5">Alias de {{ selected.name }}</h2><p class="small text-break">UUID: {{ selected.uuid || 'Sin enlace central' }} · Revisión: {{ selected.revision ?? 'Legado' }}</p>
+    <p v-if="aliasLoading" role="status">Consultando alias…</p><p v-else-if="!aliasTotal">Sin alias.</p>
+    <ul v-else><li v-for="alias in aliases" :key="alias.id">{{ alias.sourceDescription }} · {{ alias.active ? 'Activo' : 'Inactivo' }}<small class="d-block text-break">{{ alias.uuid || 'Sin enlace central' }}</small></li></ul>
+    <div class="d-flex gap-3 align-items-center"><button class="btn btn-outline-secondary btn-sm" type="button" :disabled="aliasLoading || aliasPage <= 1" @click="aliasPage--">Alias anteriores</button><span>{{ aliasPage }} / {{ Math.max(1, Math.ceil(aliasTotal / 25)) }}</span><button class="btn btn-outline-secondary btn-sm" type="button" :disabled="aliasLoading || aliasPage * 25 >= aliasTotal" @click="aliasPage++">Alias siguientes</button></div>
+  </section>
 </template>

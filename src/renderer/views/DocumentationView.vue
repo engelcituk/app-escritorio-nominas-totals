@@ -1,7 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
 import { useRoute } from 'vue-router';
-import type { PayrollConcept } from '@shared/types/payroll';
 import PageHeader from '../components/PageHeader.vue';
 
 const route = useRoute();
@@ -14,11 +12,7 @@ const topics = [
   { id: 'reportes', label: 'Reportes' },
   { id: 'conceptos', label: 'Conceptos vigentes' },
 ] as const;
-const concepts = ref<PayrollConcept[]>([]); const loading = ref(true); const search = ref('');
-const filtered = computed(() => { const q = search.value.trim().toLocaleUpperCase('es-MX'); return concepts.value.filter((concept) => !q
-  || `${concept.name} ${concept.groupName ?? ''} ${concept.aliases.map((a) => a.sourceDescription).join(' ')}`.toLocaleUpperCase('es-MX').includes(q)); });
 function isActiveTopic(id: string): boolean { return (route.hash || '#expedientes') === `#${id}`; }
-onMounted(async () => { try { concepts.value = (await window.sefiplanApi.getConceptCatalog()).concepts.filter((concept) => concept.active); } finally { loading.value = false; } });
 </script>
 
 <template>
@@ -30,8 +24,7 @@ onMounted(async () => { try { concepts.value = (await window.sefiplanApi.getConc
       <section id="retenidos"><span class="eyebrow">Exclusiones</span><h2>Empleados retenidos</h2><p>Los retenidos se capturan por TXT. Se excluyen todos sus movimientos correspondientes a los conceptos seleccionados en ese archivo. Los no encontrados requieren confirmación y quedan en auditoría.</p></section>
       <section id="duplicados"><span class="eyebrow">Trazabilidad</span><h2>Duplicados y versiones</h2><p>El hash SHA-256 identifica el contenido. No puede repetirse dentro del mismo expediente. Un archivo histórico solo puede reprocesarse como nueva versión; la anterior se supera después de que la nueva concilia correctamente.</p></section>
       <section id="reportes"><span class="eyebrow">Evidencia</span><h2>Procesamiento y reportes</h2><p>En la carpeta <strong>año / mes / grupo</strong>, cada archivo genera su <strong>TXT Completo</strong> y el expediente mantiene un único Excel de <strong>Totales mensuales</strong>. Este último contiene Resumen mensual, Por nómina, Desglose agrupado y Retenidos. La conciliación se valida internamente antes de guardar el reporte.</p></section>
-      <section id="conceptos"><span class="eyebrow">Catálogo vigente</span><h2>Conceptos documentados</h2><label class="visually-hidden" for="docs-search">Buscar concepto</label><input id="docs-search" v-model="search" class="form-control mb-3" placeholder="Buscar concepto o alias" />
-        <div v-if="loading" class="inline-loading" role="status"><span class="spinner-border spinner-border-sm" /> Cargando…</div><div v-else class="documented-concepts"><article v-for="concept in filtered" :key="concept.id"><div><strong>{{ concept.name }}</strong><small>{{ concept.groupName || 'Sin grupo' }} · {{ concept.operationFactor === -1 ? 'Resta' : 'Suma' }}</small></div><ul><li v-for="alias in concept.aliases.filter(a => a.active)" :key="alias.id">{{ alias.sourceDescription }}</li></ul></article></div></section>
+      <section id="conceptos"><span class="eyebrow">Catálogo central</span><h2>Consulta y vigencia</h2><p>Los conceptos, grupos, alias y tipos de nómina se administran en Laravel. Antes de la primera carga se requiere iniciar sesión y descargar un catálogo verificado. Sin conexión puedes procesar mientras la sesión guardada y el catálogo lo permitan; al vencer, debes sincronizar.</p><p>Los registros locales sin enlace central se conservan para el historial y no pueden utilizarse en nuevas cargas. Cada lote nuevo conserva la revisión y las reglas utilizadas para su cálculo.</p><RouterLink to="/catalogo-conceptos">Consultar catálogo y diagnóstico de vinculación</RouterLink></section>
     </div>
   </div>
 </template>

@@ -6,17 +6,18 @@ import { BatchStatus, ProcessingStage as Stage, RecordStatus } from '../../share
 import { UNIFORM_PAYROLL_LAYOUT } from '../../shared/payroll-layouts/uniformPayrollLayout.js';
 import type { ProcessingProgress } from '../../shared/types/payroll.js';
 import { DatabaseService } from '../database/DatabaseService.js';
-import { ACTIVE_CONCEPT_MATCHERS_SQL, ConceptMatcher, type ConceptMatchRule } from '../services/ConceptMatcher.js';
+import { ConceptMatcher } from '../services/ConceptMatcher.js';
 import { calculateFileSha256 } from '../services/FileHashService.js';
 import { PayrollRecordEvaluator } from '../services/PayrollRecordEvaluator.js';
 import { RetainedTotalsService, type RetainedTotalInput } from '../services/RetainedTotalsService.js';
 import { TotalsService, type BatchTotalInput } from '../services/TotalsService.js';
 import { TxtStreamParser } from '../services/TxtStreamParser.js';
+import { captureBatchCatalog } from '../services/central/captureCatalog.js';
 
 interface WorkerPayload {
   processId: string; reconciliationId: number; sourceOrder: number; databasePath: string; filePath: string; year: number; month: number;
   fortnight: number; payrollTypeId: number; selectedConceptIds: number[]; retainedEmployeeNumbers: string[];
-  missingAcknowledged: boolean; replaceActiveBatch: boolean;
+  missingAcknowledged: boolean; replaceActiveBatch: boolean; catalogRevision: number;
 }
 interface Counters { total: number; valid: number; excluded: number; invalid: number; unclassified: number; matched: number }
 
@@ -46,6 +47,7 @@ async function run(): Promise<void> {
   try {
     emitProgress(Stage.VALIDATING, counters, totalBytes, started, 0);
     const fileHash = await calculateFileSha256(payload.filePath);
+    const rules = db.transaction(() => {
     if (db.prepare(`SELECT id FROM payroll_batches WHERE reconciliation_id=? AND file_hash_sha256=? AND is_active=1`)
       .get(payload.reconciliationId, fileHash)) throw new Error('DUPLICATE_ACTIVE');
     const current = db.prepare(`SELECT id,version FROM payroll_batches WHERE reconciliation_id=? AND fortnight=?
@@ -62,24 +64,14 @@ async function run(): Promise<void> {
       current ? current.version + 1 : 1, current?.id ?? null, now, now, now);
     batchId = Number(inserted.lastInsertRowid);
 
-    const rules = db.prepare(ACTIVE_CONCEPT_MATCHERS_SQL).all() as ConceptMatchRule[];
-    const concepts = db.prepare(`SELECT c.id, c.code, c.name, c.operation_factor, g.code AS group_code, g.name AS group_name
-      FROM payroll_concepts c LEFT JOIN concept_groups g ON g.id = c.group_id WHERE c.active = 1`).all() as
-      Array<{ id: number; code: string; name: string; operation_factor: number; group_code: string | null; group_name: string | null }>;
-    const saveConcept = db.prepare(`INSERT INTO batch_concept_snapshots(batch_id, source_concept_id, concept_code, concept_name,
-      group_code, group_name, operation_factor, selected, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
-    const saveAlias = db.prepare(`INSERT INTO batch_alias_snapshots(batch_id, source_alias_id, source_concept_id, source_description,
-      normalized_description, created_at) SELECT ?, id, concept_id, source_description, normalized_description, ?
-      FROM concept_aliases WHERE active = 1`);
-    const saveRetained = db.prepare(`INSERT INTO batch_retained_employees(batch_id, employee_number, missing_acknowledged, created_at)
-      VALUES (?, ?, ?, ?)`);
-    db.transaction(() => {
-      for (const concept of concepts) saveConcept.run(batchId, concept.id, concept.code, concept.name, concept.group_code,
-        concept.group_name, concept.operation_factor, selected.has(concept.id) ? 1 : 0, now);
-      saveAlias.run(batchId, now);
-      for (const employee of retainedSet) saveRetained.run(batchId, employee, payload.missingAcknowledged ? 1 : 0, now);
-    })();
+    const rules = captureBatchCatalog(db, { batchId, reconciliationId: payload.reconciliationId, payrollTypeId: payload.payrollTypeId,
+      revision: payload.catalogRevision, selectedIds: payload.selectedConceptIds, now });
+    const saveRetained = db.prepare('INSERT INTO batch_retained_employees(batch_id,employee_number,missing_acknowledged,created_at) VALUES(?,?,?,?)');
+    for (const employee of retainedSet) saveRetained.run(batchId, employee, payload.missingAcknowledged ? 1 : 0, now);
+    return rules;
+    }).immediate();
 
+    if (batchId === null) throw new Error('No se pudo reservar el lote.');
     const evaluator = new PayrollRecordEvaluator(new ConceptMatcher(rules), selected, retainedSet);
     let lastProgress = 0; emitProgress(Stage.READING, counters, totalBytes, started, 0);
     for await (const item of new TxtStreamParser().parse(payload.filePath, () => cancelled)) {

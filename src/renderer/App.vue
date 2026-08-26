@@ -3,10 +3,12 @@ import { computed, onMounted, onBeforeUnmount, ref } from 'vue';
 import { useRoute } from 'vue-router';
 import AppSidebar from './components/AppSidebar.vue';
 import { useAuthStore } from './stores/auth';
+import { useCatalogStore } from './stores/catalog';
 
 const auth = useAuthStore();
-onMounted(() => { void auth.start(); });
-onBeforeUnmount(() => auth.stop());
+const catalog = useCatalogStore();
+onMounted(() => { void auth.start(); void catalog.start(); });
+onBeforeUnmount(() => { auth.stop(); catalog.stop(); });
 
 const route = useRoute();
 const collapsed = ref(window.matchMedia('(max-width: 767px)').matches);

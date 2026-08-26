@@ -27,4 +27,7 @@ export class ConceptMatcher {
 export const ACTIVE_CONCEPT_MATCHERS_SQL = `SELECT a.id AS aliasId, c.id AS conceptId, c.code AS conceptCode, c.name AS conceptName,
   g.id AS groupId, g.code AS groupCode, g.name AS groupName, c.operation_factor AS operationFactor, a.normalized_description AS normalizedDescription
   FROM concept_aliases a JOIN payroll_concepts c ON c.id = a.concept_id LEFT JOIN concept_groups g ON g.id = c.group_id
-  WHERE a.active = 1 AND c.active = 1`;
+  WHERE a.active=1 AND c.active=1
+    AND a.mapping_status='MAPPED' AND c.mapping_status='MAPPED'
+    AND a.present_in_snapshot=1 AND c.present_in_snapshot=1
+    AND (c.group_id IS NULL OR (g.active=1 AND g.mapping_status='MAPPED' AND g.present_in_snapshot=1))`;

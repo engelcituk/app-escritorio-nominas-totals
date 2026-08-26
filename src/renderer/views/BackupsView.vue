@@ -27,7 +27,7 @@ async function restore(): Promise<void> {
   activeAction.value = 'restore';
   try {
     const result = await window.sefiplanApi.restoreBackup();
-    if (result?.restored) message.value = `Información restaurada correctamente. Respaldo previo: ${result.automaticBackupPath}`;
+    if (result?.restored) message.value = `Información restaurada. Sincroniza el catálogo central antes de procesar nuevos TXT. Respaldo previo: ${result.automaticBackupPath}`;
   } catch (cause) {
     error.value = errorMessage(cause, 'No se pudo restaurar el respaldo.');
   } finally {
