@@ -1,6 +1,6 @@
 export interface Migration { version: number; name: string; sql: string }
 
-// Esquema inicial definitivo del expediente mensual. Durante desarrollo las bases incompatibles se recrean.
+// La versión 1 se conserva; los cambios nuevos se aplican de forma incremental.
 export const MIGRATIONS: readonly Migration[] = [{
   version: 1,
   name: 'initial_monthly_reconciliation_schema',
@@ -95,5 +95,28 @@ export const MIGRATIONS: readonly Migration[] = [{
     CREATE INDEX IF NOT EXISTS idx_batches_hash ON payroll_batches(file_hash_sha256);
     CREATE INDEX IF NOT EXISTS idx_totals_batch ON batch_totals(batch_id,source_concept_id,source_key,account_code);
     CREATE INDEX IF NOT EXISTS idx_retained_totals_batch ON batch_retained_totals(batch_id,source_key,account_code,concept_name);
+  `,
+}, {
+  version: 2,
+  name: 'desktop_installation_identity',
+  sql: `
+    CREATE TABLE app_identity (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      installation_uuid TEXT NOT NULL UNIQUE,
+      central_device_uuid TEXT UNIQUE,
+      device_name TEXT NOT NULL,
+      registered_at TEXT,
+      last_seen_at TEXT,
+      last_app_version TEXT NOT NULL,
+      api_origin TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TRIGGER app_identity_installation_immutable
+    BEFORE UPDATE OF installation_uuid ON app_identity
+    WHEN OLD.installation_uuid IS NOT NEW.installation_uuid
+    BEGIN
+      SELECT RAISE(ABORT, 'INSTALLATION_UUID_IMMUTABLE');
+    END;
   `,
 }] as const;

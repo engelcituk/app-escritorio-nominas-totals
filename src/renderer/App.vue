@@ -1,7 +1,12 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, onMounted, onBeforeUnmount, ref } from 'vue';
 import { useRoute } from 'vue-router';
 import AppSidebar from './components/AppSidebar.vue';
+import { useAuthStore } from './stores/auth';
+
+const auth = useAuthStore();
+onMounted(() => { void auth.start(); });
+onBeforeUnmount(() => auth.stop());
 
 const route = useRoute();
 const collapsed = ref(window.matchMedia('(max-width: 767px)').matches);
@@ -21,7 +26,10 @@ const pageTitle = computed(() => String(route.meta.title ?? 'SEFIPLAN Nómina'))
           <span class="topbar-context">Conciliación y totales de retenciones</span>
           <strong>{{ pageTitle }}</strong>
         </div>
-        <span class="app-version">Versión 0.1.0</span>
+        <div class="topbar-session">
+          <RouterLink :to="auth.hasSession ? '/configuracion' : '/acceso'">{{ auth.label }}</RouterLink>
+          <span v-if="auth.status" class="app-version">Versión {{ auth.status.appVersion }}</span>
+        </div>
       </header>
       <main id="main-content" class="app-content" tabindex="-1">
         <RouterView />

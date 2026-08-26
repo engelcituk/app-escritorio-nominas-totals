@@ -1,18 +1,31 @@
 import { randomUUID } from 'node:crypto';
+import assert from 'node:assert/strict';
 import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { Worker } from 'node:worker_threads';
 import ExcelJS from 'exceljs';
-import { app } from 'electron';
+import Database from 'better-sqlite3';
+import { app, safeStorage } from 'electron';
 import { DatabaseService } from '../dist/main/database/DatabaseService.js';
+import { MIGRATIONS } from '../dist/main/database/migrations.js';
+import { MigrationService } from '../dist/main/database/MigrationService.js';
 import { ExcelReportBuilder } from '../dist/main/services/ExcelReportBuilder.js';
 import { MonthlyReportBuilder } from '../dist/main/services/MonthlyReportBuilder.js';
+import { DeviceService } from '../dist/main/services/central/DeviceService.js';
+import { SecureTokenStore } from '../dist/main/services/central/SecureTokenStore.js';
 
 app.disableHardwareAcceleration();
 
+// Do not await app.whenReady at ESM top level: Electron waits for module evaluation.
+void runIntegration().then(() => app.quit(), (error) => { console.error(error); app.exit(1); });
+
+async function runIntegration() {
 const root = await mkdtemp(join(tmpdir(), 'sefiplan-monthly-integration-'));
 try {
+  app.setPath('userData', root);
+  await app.whenReady();
+  await verifyIdentityAndSecureStorage(root);
   const databasePath = join(root, 'integration.sqlite');
   const outputDirectory = join(root, 'reportes');
   const fixture = await readFile(resolve('tests/fixtures/uniform-isr.txt'), 'utf8');
@@ -164,8 +177,82 @@ try {
     monthlyReport: replacement.monthlyReport, sourceReports: [first.sourcePath, second.sourcePath, replacement.sourcePath],
     workbookSheets: expectedSheets, exportedMonthlyTotal, failedReplacementPreserved: true, reportTypes: ['TXT_COMPLETO','TOTALES_MENSUALES'] }));
 } finally {
+  assert.equal(dirname(root), resolve(tmpdir()));
+  assert.ok(basename(root).startsWith('sefiplan-monthly-integration-'));
   await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-  app.quit();
+}
+}
+
+async function verifyIdentityAndSecureStorage(directory) {
+  const path = join(directory, 'identity-v1.sqlite');
+  const database = new Database(path);
+  let installationUuid;
+  try {
+    database.pragma('foreign_keys=ON');
+    database.exec(MIGRATIONS[0].sql);
+    database.prepare('INSERT INTO schema_migrations(version,name,applied_at) VALUES(1,?,?)').run(MIGRATIONS[0].name, '2026-08-26T00:00:00Z');
+    database.prepare('INSERT INTO concept_groups(id,code,name,created_at,updated_at) VALUES(42,?,?,?,?)')
+      .run('CUSTOM', 'Grupo personalizado', 't', 't');
+    new MigrationService(database).run();
+    const devices = new DeviceService(database, '0.1.0');
+    const initial = devices.ensureIdentity();
+    installationUuid = initial.installationUuid;
+    assert.equal(initial.deviceUuid, null);
+    assert.equal(devices.ensureIdentity().installationUuid, installationUuid);
+    const prepared = devices.prepareRegistration('https://nomina.example');
+    assert.notEqual(prepared.deviceUuid, installationUuid);
+    assert.equal(prepared.registeredAt, null);
+    assert.equal(new DeviceService(database, '0.1.0').prepareRegistration('https://nomina.example').deviceUuid, prepared.deviceUuid);
+    assert.throws(() => devices.prepareRegistration('https://other.example'));
+    const registration = { installationUuid, deviceUuid: prepared.deviceUuid, deviceName: 'Equipo de prueba', apiOrigin: 'https://nomina.example' };
+    assert.equal(devices.acceptRegistration(registration).deviceUuid, registration.deviceUuid);
+    assert.throws(() => devices.acceptRegistration({ ...registration, installationUuid: randomUUID() }));
+    assert.throws(() => devices.acceptRegistration({ ...registration, deviceUuid: randomUUID() }));
+    assert.throws(() => devices.acceptRegistration({ ...registration, apiOrigin: 'https://other.example' }));
+    devices.recordHeartbeat(registration.deviceUuid);
+    assert.ok(devices.getIdentity().lastSeenAt);
+    assert.throws(() => devices.recordHeartbeat(randomUUID()));
+    assert.throws(() => database.prepare('UPDATE app_identity SET installation_uuid=?').run(randomUUID()));
+    assert.deepEqual(database.prepare('SELECT id,name FROM concept_groups WHERE id=42').get(), { id: 42, name: 'Grupo personalizado' });
+    assert.deepEqual(database.pragma('foreign_key_check'), []);
+  } finally { database.close(); }
+
+  const reopened = new Database(path);
+  try {
+    new MigrationService(reopened).run();
+    const identity = new DeviceService(reopened, '0.1.1').ensureIdentity();
+    assert.equal(identity.installationUuid, installationUuid);
+    assert.equal(identity.appVersion, '0.1.1');
+    assert.equal(reopened.prepare('SELECT COUNT(*) count FROM app_identity').get().count, 1);
+    assert.equal(reopened.prepare('SELECT COUNT(*) count FROM schema_migrations').get().count, 2);
+    const restored = new Database(':memory:');
+    try {
+      new MigrationService(restored).run();
+      const otherInstallation = new DeviceService(restored, '0.1.0').ensureIdentity();
+      assert.notEqual(otherInstallation.installationUuid, installationUuid);
+      new DeviceService(reopened, '0.1.1').preserveInRestoredDatabase(restored);
+      assert.equal(new DeviceService(restored, '0.1.1').getIdentity().installationUuid, installationUuid);
+    } finally { restored.close(); }
+  } finally { reopened.close(); }
+
+  assert.ok(safeStorage.isEncryptionAvailable(), 'La prueba requiere cifrado real del sistema operativo.');
+  const cipher = {
+    isEncryptionAvailable: () => safeStorage.isEncryptionAvailable(),
+    encryptString: (value) => safeStorage.encryptString(value),
+    decryptString: (value) => safeStorage.decryptString(value),
+    ...(process.platform === 'linux' ? { getSelectedStorageBackend: () => safeStorage.getSelectedStorageBackend() } : {}),
+  };
+  const context = { apiOrigin: 'https://nomina.example', installationUuid };
+  const store = new SecureTokenStore(directory, cipher);
+  const canary = `synthetic-session-${randomUUID()}`;
+  await store.save(canary, context);
+  assert.equal((await readFile(join(directory, 'secure', 'session.bin'))).includes(Buffer.from(canary)), false);
+  assert.equal(await new SecureTokenStore(directory, cipher).read(context), canary);
+  assert.equal((await readFile(path)).includes(Buffer.from(canary)), false);
+  await store.clear();
+  assert.equal(await store.read(context), null);
+  console.log(JSON.stringify({ identityMigration: 'v1-to-v2', legacyPreserved: true, identityStable: true,
+    secureStorage: 'real-electron-roundtrip', tokenStoredInSQLite: false }));
 }
 
 async function processBatch({ databasePath, outputDirectory, reconciliationId, filePath, fortnight, payrollTypeId,

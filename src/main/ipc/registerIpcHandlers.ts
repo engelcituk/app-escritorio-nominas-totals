@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
+import { trustedHandler } from './trustedSender.js';
 import { existsSync } from 'node:fs';
 import { copyFile, mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
-import { app, dialog, ipcMain, shell, type BrowserWindow } from 'electron';
+import { app, dialog, shell, type BrowserWindow } from 'electron';
 import { conceptAliasDraftSchema, conceptGroupDraftSchema, fileTokenSchema, historyQuerySchema, payrollConceptDraftSchema,
   monthlyReconciliationKeySchema, payrollTypeDraftSchema, processMonthlyImportRequestSchema, retainedValidationSchema } from '../../shared/schemas/ipc.js';
 import type { BatchSummary, ConceptAlias, ConceptGroup, MonthlyReconciliationSummary, PayrollConcept, PayrollTypeDraft,
@@ -15,19 +16,21 @@ import { inspectPayrollFile } from '../services/PreflightService.js';
 import { ProcessingService } from '../services/ProcessingService.js';
 import { getMonthlyReportDirectory } from '../services/ReportPathService.js';
 import { TxtStreamParser } from '../services/TxtStreamParser.js';
+import { DeviceService } from '../services/central/DeviceService.js';
 
 const fileTokens = new Map<string, string>(); const directoryTokens = new Map<string, string>();
 
 export function registerIpcHandlers(windowProvider: () => BrowserWindow | null, databasePath: string): ProcessingService {
   const processing = new ProcessingService(databasePath, windowProvider);
-  ipcMain.handle('file:select-txts', async (): Promise<SelectedFile[]> => {
+  const handle = trustedHandler(windowProvider);
+  handle('file:select-txts', async (): Promise<SelectedFile[]> => {
     const result = await dialog.showOpenDialog(windowProvider()!, { title: 'Seleccionar archivos de nómina', properties: ['openFile', 'multiSelections'],
       filters: [{ name: 'Archivos de nómina', extensions: ['txt'] }] });
     if (result.canceled) return []; const { stat } = await import('node:fs/promises');
     return Promise.all(result.filePaths.map(async (path) => { const info = await stat(path); const token = randomUUID(); fileTokens.set(token, path);
       return { token, name: basename(path), size: info.size, modifiedAt: info.mtime.toISOString() }; }));
   });
-  ipcMain.handle('file:inspect', async (_event, raw: unknown) => {
+  handle('file:inspect', async (_event, raw: unknown) => {
     const payload = fileTokenSchema.parse(raw); const path = resolveToken(fileTokens, payload.fileToken, 'El archivo seleccionado ya no está disponible.');
     const { stat } = await import('node:fs/promises'); const info = await stat(path); const db = new DatabaseService(databasePath);
     try {
@@ -41,10 +44,10 @@ export function registerIpcHandlers(windowProvider: () => BrowserWindow | null, 
       return result;
     } finally { db.close(); }
   });
-  ipcMain.handle('directory:select-export', async () => { const result = await dialog.showOpenDialog(windowProvider()!, {
+  handle('directory:select-export', async () => { const result = await dialog.showOpenDialog(windowProvider()!, {
     title: 'Seleccionar carpeta de reportes', properties: ['openDirectory', 'createDirectory'] }); const path = result.filePaths[0];
     if (result.canceled || !path) return null; const token = randomUUID(); directoryTokens.set(token, path); return { token, name: path }; });
-  ipcMain.handle('payroll:process-month', (_event, raw: unknown) => {
+  handle('payroll:process-month', (_event, raw: unknown) => {
     const request = processMonthlyImportRequestSchema.parse(raw); const files = request.files.map((file) => {
       const filePath = resolveToken(fileTokens, file.fileToken, 'Selecciona nuevamente los archivos de nómina.'); return { filePath, name: basename(filePath) }; });
     const db = new DatabaseService(databasePath); const setting = db.connection.prepare(`SELECT value FROM app_settings WHERE key='reports_directory'`).get() as { value: string } | undefined; db.close();
@@ -52,7 +55,7 @@ export function registerIpcHandlers(windowProvider: () => BrowserWindow | null, 
       : (setting?.value ?? join(app.getPath('documents'), 'SEFIPLAN_Nomina'));
     return { processId: processing.start(request, { files, outputDirectory }) };
   });
-  ipcMain.handle('payroll:validate-retained', async (_event, raw: unknown): Promise<RetainedValidationResult> => {
+  handle('payroll:validate-retained', async (_event, raw: unknown): Promise<RetainedValidationResult> => {
     const request = retainedValidationSchema.parse(raw);
     const matches: RetainedValidationResult['matches'] = [];
     for (const source of request.files) {
@@ -65,28 +68,28 @@ export function registerIpcHandlers(windowProvider: () => BrowserWindow | null, 
     }
     return { matches, missingCount: matches.filter((item) => !item.found).length };
   });
-  ipcMain.handle('payroll:cancel', (_event, id: unknown) => processing.cancel(String(id)));
+  handle('payroll:cancel', (_event, id: unknown) => processing.cancel(String(id)));
 
-  ipcMain.handle('concepts:list', () => listCatalog(databasePath));
-  ipcMain.handle('concepts:save-group', (_event, raw: unknown) => saveGroup(databasePath, conceptGroupDraftSchema.parse(raw)));
-  ipcMain.handle('concepts:save-concept', (_event, raw: unknown) => saveConcept(databasePath, payrollConceptDraftSchema.parse(raw)));
-  ipcMain.handle('concepts:add-alias', (_event, raw: unknown) => addAlias(databasePath, conceptAliasDraftSchema.parse(raw)));
-  ipcMain.handle('concepts:remove-alias', (_event, id: unknown) => { const db = new DatabaseService(databasePath); const now = new Date().toISOString(); try {
+  handle('concepts:list', () => listCatalog(databasePath));
+  handle('concepts:save-group', (_event, raw: unknown) => saveGroup(databasePath, conceptGroupDraftSchema.parse(raw)));
+  handle('concepts:save-concept', (_event, raw: unknown) => saveConcept(databasePath, payrollConceptDraftSchema.parse(raw)));
+  handle('concepts:add-alias', (_event, raw: unknown) => addAlias(databasePath, conceptAliasDraftSchema.parse(raw)));
+  handle('concepts:remove-alias', (_event, id: unknown) => { const db = new DatabaseService(databasePath); const now = new Date().toISOString(); try {
     const aliasId = Number(id); db.connection.transaction(() => { db.connection.prepare('UPDATE concept_aliases SET active=0,updated_at=? WHERE id=?').run(now, aliasId);
       db.connection.prepare(`INSERT INTO audit_logs(action,entity_type,entity_id,description,created_at)
         VALUES ('DEACTIVATE','CONCEPT_ALIAS',?,'Se desactivó un alias de concepto.',?)`).run(String(aliasId), now); })(); } finally { db.close(); } });
-  ipcMain.handle('payroll-types:list', (_event, includeInactive: unknown) => listPayrollTypes(databasePath, Boolean(includeInactive)));
-  ipcMain.handle('payroll-types:save', (_event, raw: unknown) => savePayrollType(databasePath, payrollTypeDraftSchema.parse(raw)));
-  ipcMain.handle('monthly:get-or-create', (_event, raw: unknown) => getOrCreateMonthly(databasePath, monthlyReconciliationKeySchema.parse(raw)));
+  handle('payroll-types:list', (_event, includeInactive: unknown) => listPayrollTypes(databasePath, Boolean(includeInactive)));
+  handle('payroll-types:save', (_event, raw: unknown) => savePayrollType(databasePath, payrollTypeDraftSchema.parse(raw)));
+  handle('monthly:get-or-create', (_event, raw: unknown) => getOrCreateMonthly(databasePath, monthlyReconciliationKeySchema.parse(raw)));
 
-  ipcMain.handle('history:list', (_event, payload: unknown) => listBatchHistory(databasePath, payload));
-  ipcMain.handle('history:monthly', (_event, payload: unknown) => listMonthlyHistory(databasePath, payload));
-  ipcMain.handle('report:open-folder', (_event, id: unknown) => openReport(databasePath, 'batch_id', Number(id)));
-  ipcMain.handle('report:open-month-folder', (_event, id: unknown) => openMonthlyReportDirectory(databasePath, Number(id)));
-  ipcMain.handle('settings:get', () => { const db = new DatabaseService(databasePath); const rows = db.connection.prepare('SELECT key,value FROM app_settings').all() as Array<{ key: string; value: string }>; db.close(); return Object.fromEntries(rows.map((row) => [row.key, row.value])); });
-  ipcMain.handle('settings:update', (_event, payload: unknown) => updateSettings(databasePath, payload));
-  ipcMain.handle('backup:create', async () => createBackup(databasePath, windowProvider));
-  ipcMain.handle('backup:restore', async () => restoreBackup(databasePath, windowProvider));
+  handle('history:list', (_event, payload: unknown) => listBatchHistory(databasePath, payload));
+  handle('history:monthly', (_event, payload: unknown) => listMonthlyHistory(databasePath, payload));
+  handle('report:open-folder', (_event, id: unknown) => openReport(databasePath, 'batch_id', Number(id)));
+  handle('report:open-month-folder', (_event, id: unknown) => openMonthlyReportDirectory(databasePath, Number(id)));
+  handle('settings:get', () => { const db = new DatabaseService(databasePath); const rows = db.connection.prepare('SELECT key,value FROM app_settings').all() as Array<{ key: string; value: string }>; db.close(); return Object.fromEntries(rows.map((row) => [row.key, row.value])); });
+  handle('settings:update', (_event, payload: unknown) => updateSettings(databasePath, payload));
+  handle('backup:create', async () => createBackup(databasePath, windowProvider));
+  handle('backup:restore', async () => restoreBackup(databasePath, windowProvider));
   return processing;
 }
 
@@ -204,6 +207,12 @@ async function createBackup(databasePath: string, provider: () => BrowserWindow 
 async function restoreBackup(databasePath: string, provider: () => BrowserWindow | null): Promise<{ restored: boolean; automaticBackupPath: string } | null> { const chosen = await dialog.showOpenDialog(provider()!, { title: 'Restaurar respaldo', properties: ['openFile'], filters: [{ name: 'Respaldo ZIP', extensions: ['zip'] }] });
   const archive = chosen.filePaths[0]; if (chosen.canceled || !archive) return null; const confirmation = await dialog.showMessageBox(provider()!, { type: 'warning', buttons: ['Restaurar','Cancelar'], defaultId: 1, cancelId: 1, message: 'La información actual será reemplazada.', detail: 'Antes se creará automáticamente un respaldo de la base actual.' });
   if (confirmation.response !== 0) return null; const temporary = await mkdtemp(join(app.getPath('temp'), 'sefiplan-restore-')); const automaticBackupPath = join(app.getPath('userData'), 'backups', `Antes_de_restaurar_${new Date().toISOString().replace(/[:.]/g, '-')}.zip`);
-  try { await new BackupService().create(databasePath, automaticBackupPath); const restoredPath = await new BackupService().extractValidated(archive, temporary); const candidate = new DatabaseService(restoredPath); candidate.close();
+  try { await new BackupService().create(databasePath, automaticBackupPath); const restoredPath = await new BackupService().extractValidated(archive, temporary);
+    const candidate = new DatabaseService(restoredPath);
+    try {
+      const current = new DatabaseService(databasePath);
+      try { new DeviceService(current.connection, app.getVersion()).preserveInRestoredDatabase(candidate.connection); }
+      finally { current.close(); }
+    } finally { candidate.close(); }
     await rm(`${databasePath}-wal`, { force: true }); await rm(`${databasePath}-shm`, { force: true }); await copyFile(restoredPath, databasePath); return { restored: true, automaticBackupPath }; } finally { await rm(temporary, { recursive: true, force: true }); } }
 function resolveToken(registry: Map<string, string>, token: string, message: string): string { const value = registry.get(token); if (!value) throw new Error(message); return value; }

@@ -52,3 +52,19 @@
 .filter-bar, .period-toolbar { display: flex; align-items: end; gap: .75rem; margin-bottom: 1rem; padding: 1rem; border: 1px solid #d8dde5; background: #fff; }.filter-bar > div, .period-toolbar > div { min-width: 150px; }.filter-search { flex: 1; }.pagination-bar { display: flex; justify-content: space-between; align-items: center; margin-top: 1rem; }.pagination-bar > div { display: flex; align-items: center; gap: .75rem; }.empty-state { display: grid; min-height: 300px; place-items: center; align-content: center; padding: 2rem; border: 1px solid #d8dde5; background: #fff; text-align: center; }.empty-state > i { margin-bottom: .8rem; color: #667085; font-size: 2.25rem; }.empty-state p { max-width: 540px; }.settings-panel, .backup-panel { display: grid; max-width: 840px; gap: 1.5rem; padding: 1.5rem; border: 1px solid #d8dde5; background: #fff; }.backup-panel { grid-template-columns: auto 1fr; }.backup-panel > i { color: #18794e; font-size: 2rem; }.success-message { margin: 1rem 0 0; color: #18794e; }
 @media (max-width: 1100px) { .app-shell, .app-shell.sidebar-collapsed { grid-template-columns: 72px minmax(0,1fr); }.app-sidebar .brand-copy, .app-sidebar .sidebar-link span, .app-sidebar .sidebar-collapse span { display: none; }.option-grid, .home-links, .period-workspace, .payroll-type-settings__body { grid-template-columns: 1fr; }.file-selector { flex-wrap: wrap; }.file-selector .btn { margin-left: auto; } }
 @media (max-width: 767px) { .app-shell, .app-shell.sidebar-collapsed { grid-template-columns: 1fr; }.app-sidebar { position: fixed; z-index: 1040; width: 72px; transform: translateX(-100%); }.app-shell:not(.sidebar-collapsed) .app-sidebar { transform: translateX(0); }.app-topbar { padding: 0 1rem; }.app-content { padding: 1rem; }.page-header, .file-selector, .process-ready, .filter-bar, .period-toolbar { align-items: stretch; flex-direction: column; }.home-primary { grid-template-columns: 1fr; padding: 1.25rem; }.option-grid, .period-workspace__fields { grid-template-columns: 1fr; }.progress-metrics, .result-metrics { grid-template-columns: repeat(2, 1fr); }.progress-metrics div:nth-child(3), .result-metrics div:nth-child(3) { border-left: 0; }.app-version { display: none; } }
+// Institutional session forms: bounded content, visible focus and wrapping identifiers.
+.auth-panel, .central-session {
+  padding: 1.5rem;
+  border: 1px solid #d8dce2;
+  border-radius: .5rem;
+  background: #fff;
+  h2 { font-size: 1.25rem; margin-bottom: 1rem; }
+}
+.auth-panel { max-width: 40rem; }
+.auth-origin, .auth-uuid { overflow-wrap: anywhere; }
+.auth-uuid { font-size: .875rem; font-variant-numeric: tabular-nums; }
+.topbar-session { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: .5rem 1rem; }
+.auth-panel :focus-visible, .central-session :focus-visible, .topbar-session :focus-visible {
+  outline: 3px solid #6e2134;
+  outline-offset: 3px;
+}

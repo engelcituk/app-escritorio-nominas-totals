@@ -1,10 +1,19 @@
 import type { HistoryQuery } from '../schemas/ipc.js';
+import type { AuthStatus, LoginInput } from './auth.js';
 import type { BatchSummary, ConceptAliasDraft, ConceptGroup, ConceptGroupDraft, MonthlyReconciliationResult,
   MonthlyReconciliationSummary, PayrollConcept, PayrollConceptDraft, PayrollTypeDraft, PayrollTypeSummary,
   PreflightResult, ProcessMonthlyImportRequest, ProcessingProgress,
   RetainedValidationResult, SelectedFile } from './payroll.js';
 
 export interface SefiplanApi {
+  auth: {
+    login(input: LoginInput): Promise<AuthStatus>;
+    logout(): Promise<AuthStatus>;
+    status(): Promise<AuthStatus>;
+    check(): Promise<AuthStatus>;
+    onChanged(callback: (status: AuthStatus) => void): () => void;
+  };
+  openBackoffice(): Promise<void>;
   selectTxtFiles(): Promise<SelectedFile[]>;
   inspectTxtFile(payload: { fileToken: string; includePreview: boolean }): Promise<PreflightResult>;
   selectExportDirectory(): Promise<{ token: string; name: string } | null>;

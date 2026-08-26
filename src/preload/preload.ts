@@ -1,8 +1,19 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { SefiplanApi } from '../shared/types/api.js';
+import type { AuthStatus } from '../shared/types/auth.js';
 import type { MonthlyReconciliationResult, ProcessingProgress } from '../shared/types/payroll.js';
 
 const api: SefiplanApi = {
+  auth: {
+    login: (input) => ipcRenderer.invoke('auth:login', input), logout: () => ipcRenderer.invoke('auth:logout'),
+    status: () => ipcRenderer.invoke('auth:status'), check: () => ipcRenderer.invoke('auth:check'),
+    onChanged: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, status: AuthStatus) => callback(status);
+      ipcRenderer.on('auth:changed', listener);
+      return () => ipcRenderer.removeListener('auth:changed', listener);
+    },
+  },
+  openBackoffice: () => ipcRenderer.invoke('central:open-backoffice'),
   selectTxtFiles: () => ipcRenderer.invoke('file:select-txts'), inspectTxtFile: (payload) => ipcRenderer.invoke('file:inspect', payload),
   selectExportDirectory: () => ipcRenderer.invoke('directory:select-export'), processMonthlyImport: (payload) => ipcRenderer.invoke('payroll:process-month', payload),
   validateRetainedEmployees: (payload) => ipcRenderer.invoke('payroll:validate-retained', payload),

@@ -2,8 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { MIGRATIONS } from '../../src/main/database/migrations.js';
 
 describe('esquema inicial del expediente mensual', () => {
-  it('mantiene una sola migración limpia con catálogo, lotes activos y salidas vigentes', () => {
-    expect(MIGRATIONS).toHaveLength(1);
+  it('conserva el esquema v1 con catálogo, lotes activos y salidas vigentes', () => {
     expect(MIGRATIONS[0]?.version).toBe(1);
     expect(MIGRATIONS[0]?.sql).toContain('CREATE TABLE IF NOT EXISTS monthly_reconciliations');
     expect(MIGRATIONS[0]?.sql).toContain('CREATE TABLE IF NOT EXISTS payroll_types');

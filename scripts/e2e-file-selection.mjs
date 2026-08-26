@@ -1,7 +1,7 @@
 /* global document */
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { _electron as electron } from 'playwright';
 
 const userDataDirectory = await mkdtemp(join(tmpdir(), 'sefiplan-e2e-'));
@@ -45,4 +45,9 @@ try {
   await window.getByText('Expediente y reporte mensual actualizados.', { exact: true }).waitFor({ timeout: 60000 });
   console.log(JSON.stringify({ preloadReady, selectedFilename, processing: 'completed', monthlyMatrixRemoved: true,
     previewLayout, wideLayout, compactLayout }));
-} finally { await electronApp.close(); await rm(userDataDirectory, { recursive: true, force: true }); }
+} finally { await electronApp.close(); await cleanup(userDataDirectory); }
+
+async function cleanup(directory) {
+  if (dirname(resolve(directory)) !== resolve(tmpdir()) || !basename(directory).startsWith('sefiplan-e2e-')) throw new Error('Ruta de limpieza no permitida.');
+  await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 });
+}

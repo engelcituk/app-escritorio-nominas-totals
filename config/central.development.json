@@ -1,0 +1,5 @@
+{
+  "apiBaseUrl": "https://tools-sefiplan.test",
+  "backofficeUrl": "https://tools-sefiplan.test/",
+  "requestTimeoutMs": 15000
+}

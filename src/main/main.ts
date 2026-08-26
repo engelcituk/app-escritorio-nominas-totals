@@ -5,6 +5,9 @@ import { DatabaseService, IncompatibleSchemaError } from './database/DatabaseSer
 import { registerIpcHandlers } from './ipc/registerIpcHandlers.js';
 import { RecoveryService } from './services/RecoveryService.js';
 import { createMainWindow } from './window.js';
+import { DeviceService } from './services/central/DeviceService.js';
+import { createCentralServices } from './services/central/bootstrap.js';
+import { registerAuthHandlers } from './ipc/registerAuthHandlers.js';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -25,10 +28,20 @@ if (!hasSingleInstanceLock) {
   app.whenReady().then(async () => {
     const databasePath = join(app.getPath('userData'), 'sefiplan-nomina.sqlite');
     const db = await openDevelopmentDatabase(databasePath);
-    new RecoveryService(db.connection).recoverInterruptedBatches();
-    db.close();
+    try {
+      new DeviceService(db.connection, app.getVersion()).ensureIdentity();
+      new RecoveryService(db.connection).recoverInterruptedBatches();
+    } finally { db.close(); }
+    const { auth, configuration } = await createCentralServices(databasePath, (status) => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('auth:changed', status);
+    });
     mainWindow = createMainWindow();
     registerIpcHandlers(() => mainWindow, databasePath);
+    registerAuthHandlers(() => mainWindow, auth, configuration);
+    void auth.restore();
+    const heartbeat = setInterval(() => { void auth.check(); }, 5 * 60_000);
+    heartbeat.unref();
+    app.once('before-quit', () => { clearInterval(heartbeat); auth.dispose(); });
     app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) mainWindow = createMainWindow(); });
   }).catch((error: unknown) => {
     const message = error instanceof Error ? error.message : 'No se pudo iniciar la aplicación.';

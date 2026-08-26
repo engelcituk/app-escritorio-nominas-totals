@@ -14,6 +14,7 @@ export default createRouter({
     return { top: 0 };
   },
   routes: [
+    { path: '/acceso', name: 'login', component: () => import('../views/LoginView.vue'), meta: { title: 'Acceso institucional' } },
     { path: '/', name: 'home', component: HomeView, meta: { title: 'Inicio' } },
     { path: '/importar', name: 'import', component: ImportView, meta: { title: 'Expedientes mensuales' } },
     { path: '/historico', name: 'history', component: () => import('../views/HistoryView.vue'), meta: { title: 'Histórico' } },

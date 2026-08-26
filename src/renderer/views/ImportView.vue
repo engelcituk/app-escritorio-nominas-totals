@@ -21,7 +21,7 @@ interface QuickConcept { fileToken:string;detectedKey:string;name:string;code:st
 
 const now=new Date(); const year=ref(now.getFullYear()); const month=ref(now.getMonth()+1); const conceptGroupId=ref<number|null>(null);
 const groups=ref<ConceptGroup[]>([]); const concepts=ref<PayrollConcept[]>([]); const payrollTypes=ref<PayrollTypeSummary[]>([]);
-const reconciliation=ref<MonthlyReconciliationSummary|null>(null); const contextLoading=ref(false); const files=ref<FileState[]>([]);
+const reconciliation=ref<MonthlyReconciliationSummary|null>(null); const contextLoading=ref(true); const files=ref<FileState[]>([]);
 const selecting=ref(false); const starting=ref(false); const validatingRetained=ref(false); const openingReports=ref(false);
 const processId=ref(''); const progress=ref<ProcessingProgress|null>(null); const result=ref<MonthlyReconciliationResult|null>(null);
 const error=ref(''); const statusMessage=ref(''); const errorAlert=ref<HTMLElement|null>(null);
@@ -61,7 +61,14 @@ async function loadCatalogs():Promise<void>{ const [catalog,types]=await Promise
 async function loadContext():Promise<void>{ if(!conceptGroupId.value)return; contextLoading.value=true; error.value=''; try{ reconciliation.value=await window.sefiplanApi.getOrCreateMonthlyReconciliation({
     year:year.value,month:month.value,conceptGroupId:conceptGroupId.value }); files.value=[]; result.value=null; }
   catch(cause){showError(errorMessage(cause,'No se pudo abrir el expediente mensual.'));}finally{contextLoading.value=false;} }
-let contextSequence=0; watch([year,month,conceptGroupId],()=>{ const sequence=++contextSequence; setTimeout(()=>{if(sequence===contextSequence)void loadContext();},180); });
+let contextInitialized=false; let contextSequence=0;
+watch([year,month,conceptGroupId],()=>{
+  // Initial catalog selection is already followed by loadContext in onMounted.
+  // A second delayed load would silently clear files selected just after startup.
+  if(!contextInitialized)return;
+  contextLoading.value=true;
+  const sequence=++contextSequence; setTimeout(()=>{if(sequence===contextSequence)void loadContext();},180);
+});
 
 async function selectFiles():Promise<void>{ selecting.value=true; try{ const selected=await window.sefiplanApi.selectTxtFiles(); const baseType=bulkPayrollTypeId.value??payrollTypes.value[0]?.id??0;
     const states=selected.map((file):FileState=>({ file,preflight:null,inspecting:true,fortnight:allowedFortnights.value[0],payrollTypeId:baseType,selectedConceptIds:[],
@@ -102,7 +109,9 @@ function showError(message:string):void{error.value=message;void nextTick(()=>er
 const stopProgress=window.sefiplanApi.subscribeToProgress(value=>{if(processId.value&&value.processId!==processId.value)return;processId.value||=value.processId;progress.value=value;starting.value=false;});
 const stopCompletion=window.sefiplanApi.subscribeToCompletion(value=>{if(processId.value&&value.processId!==processId.value)return;result.value=value;starting.value=false;processId.value='';
   if(value.status===BatchStatus.FAILED)showError(value.errorMessage??'No se pudo actualizar el expediente.');else{statusMessage.value='Expediente y reporte mensual actualizados.';void loadContext();}});
-onMounted(async()=>{try{await loadCatalogs();await loadContext();}catch(cause){showError(errorMessage(cause,'No se pudo preparar la pantalla.'));}});onUnmounted(()=>{stopProgress();stopCompletion();});
+onMounted(async()=>{try{await loadCatalogs();await loadContext();}catch(cause){showError(errorMessage(cause,'No se pudo preparar la pantalla.'));}
+  finally{contextInitialized=true;contextLoading.value=false;}});
+onUnmounted(()=>{++contextSequence;stopProgress();stopCompletion();});
 </script>
 
 <template>
@@ -118,7 +127,7 @@ onMounted(async()=>{try{await loadCatalogs();await loadContext();}catch(cause){s
 
   <div class="process-steps mt-4">
     <StepSection :number="1" title="Archivos para actualizar" :description="`Solo ${allowedFortnights.map(q=>`Q${String(q).padStart(2,'0')}`).join(' y ')} pertenecen a este mes.`">
-      <div class="row g-3 mb-3 align-items-end"><div class="col-md-4"><button class="btn btn-primary w-100" type="button" :disabled="selecting||processing||contextLoading" @click="selectFiles"><span v-if="selecting" class="spinner-border spinner-border-sm" /><i v-else class="bi bi-files" /> {{ files.length?'Agregar otros TXT':'Seleccionar archivos TXT' }}</button></div>
+      <div class="row g-3 mb-3 align-items-end"><div class="col-md-4"><button class="btn btn-primary w-100" type="button" :disabled="selecting||processing||contextLoading" @click="selectFiles"><span v-if="selecting" class="spinner-border spinner-border-sm" /><i v-else class="bi bi-files" aria-hidden="true" /> {{ files.length?'Agregar otros TXT':'Seleccionar archivos TXT' }}</button></div>
         <div class="col-md-5"><label class="form-label" for="bulk-type">Aplicar tipo a todos</label><div class="input-group"><select id="bulk-type" v-model.number="bulkPayrollTypeId" class="form-select"><option v-for="type in payrollTypes" :key="type.id" :value="type.id">{{ type.name }}</option></select><button class="btn btn-outline-secondary" type="button" @click="applyPayrollType">Aplicar</button></div></div></div>
       <div v-if="!files.length" class="compact-empty"><i class="bi bi-file-earmark-text" /><span>No hay archivos pendientes en esta actualización.</span></div>
       <article v-for="(item,index) in files" :key="item.file.token" class="file-queue__item"><div class="file-queue__main"><div class="file-queue__name"><i class="bi bi-file-earmark-text" aria-hidden="true" /><div><strong>{{ item.file.name }}</strong><small>{{ (item.file.size/1048576).toFixed(1) }} MB</small></div></div>
@@ -148,7 +157,7 @@ onMounted(async()=>{try{await loadCatalogs();await loadContext();}catch(cause){s
     </StepSection>
     <StepSection :number="4" title="Actualizar expediente" description="Cada archivo conciliado actualiza el reporte mensual vigente." :disabled="!files.length"><ProcessingProgressView v-if="progress&&processing" :progress="progress" />
       <div v-if="processBlockers.length&&!processing" class="alert alert-warning" role="status"><strong>Falta completar:</strong><ul><li v-for="(blocker,index) in processBlockers" :key="index"><strong>{{ blocker.filename }}:</strong> {{ blocker.reason }}</li></ul></div>
-      <div class="process-ready"><div><strong>{{ files.length }} TXT en esta actualización</strong><p class="mb-0">El reporte mensual se sobrescribirá al conciliar.</p></div><div class="d-flex gap-2 flex-wrap"><button class="btn btn-outline-secondary" type="button" :disabled="openingReports||!reconciliation" @click="openReports"><i class="bi bi-folder2-open" /> {{ openingReports?'Abriendo…':'Abrir carpeta de reportes' }}</button><button class="btn btn-primary" type="button" :disabled="!canProcess" @click="start"><i class="bi bi-arrow-repeat" /> Actualizar expediente</button></div></div>
+      <div class="process-ready"><div><strong>{{ files.length }} TXT en esta actualización</strong><p class="mb-0">El reporte mensual se sobrescribirá al conciliar.</p></div><div class="d-flex gap-2 flex-wrap"><button class="btn btn-outline-secondary" type="button" :disabled="openingReports||!reconciliation" @click="openReports"><i class="bi bi-folder2-open" aria-hidden="true" /> {{ openingReports?'Abriendo…':'Abrir carpeta de reportes' }}</button><button class="btn btn-primary" type="button" :disabled="!canProcess" @click="start"><i class="bi bi-arrow-repeat" aria-hidden="true" /> Actualizar expediente</button></div></div>
       <button v-if="processing" class="btn btn-outline-danger mt-3" type="button" @click="cancel">Cancelar</button><p v-if="statusMessage" class="operation-status mt-3" role="status">{{ statusMessage }}</p></StepSection>
   </div>
 </template>
